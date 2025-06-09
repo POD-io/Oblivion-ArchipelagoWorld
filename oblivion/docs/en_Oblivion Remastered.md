@@ -1,9 +1,5 @@
 # Oblivion Remastered
 
-## Where is the settings page?
-
-The [player settings page for this game](../player-settings) contains all the options you need to configure and export a config file.
-
 ## What does randomization do to this game?
 
 In Oblivion Remastered, completing Daedric shrine quests will send location checks to the Archipelago server and grant items to other players in the multiworld. Meanwhile, you'll receive shrine unlock tokens and helpful items from other players to aid in your quest completion.
