@@ -8,30 +8,30 @@ This APWorld allows Oblivion Remastered to participate in Archipelago multiworld
 
 ## How it Works
 
-## Locked Content
+### Locked Content
 
 Content in Oblivion Remastered is now gated behind progression items that must be received from the multiworld:
 
-### Daedric Shrine Access
+#### Daedric Shrine Access
 The Daedra lords will no longer grant you access to their shrines without first receiving their blessing in the form of a Shrine Token.
 Upon completion of their quest, you no longer receive their artifact, but instead a random item from the multiworld.
 Each included shrine will have their artifact mixed into the pool of available items.
-- **Requirement:** Specific Shrine Tokens (e.g., "Azura Shrine Token")
+- **Requirement:** Shrine Unlock Tokens (e.g., "Azura Shrine Token")
 - **Available:** Random shrines are selected from the 15 total Daedric shrines based on Shrine Count setting
 
-### Arena Questline
+#### Arena Questline
 To take place in Arena matches, you must have received the corresponding Progressive Arena Rank item from the multiworld.
 Each rank unlocks a group of 3 matches, which reward a random item from the multiworld.
 - **Requirement:** Progressive Arena Rank items
 - **Progression:** 7 ranks unlock matches in groups of 3
 
-### Oblivion Gate Access
+#### Oblivion Gate Access
 To access Oblivion Gates, you must have received an Oblivion Gate Key item from the multiworld.
 Closing a gate will award a random item from the multiworld.
 - **Requirement:** Oblivion Gate Keys
 - **Progression:** Each gate requires a key to access
 
-### Progressive Shop Stock / Shopsanity
+#### Progressive Shop Stock / Shopsanity
 Innkeepers around Cyrodiil have a series of key items that can be bought in exchange for gold.
 These items are location checks that award a random item from the multiworld.
 - **Requirement:** Progressive Shop Stock items
@@ -48,18 +48,18 @@ These items are location checks that award a random item from the multiworld.
 3. **Send items to other players** when you complete checks
 4. **Achieve your victory condition** to win
 
-## Supported Location Checks
+## Supported Locations
 
-### Daedric Shrine Quests
-### Arena Matches
-### Oblivion Gates
-### Dungeon Clears
-### Shop Items
-### Skill Increases
+- **Daedric Shrine Quests**
+- **Arena Matches**
+- **Oblivion Gates**
+- **Dungeon Clears**
+- **Shop Items**
+- **Skill Increases**
 
-## Configuration
+## Available Settings
 
-### Victory Goals
+### Goals
 - **`shrine_seeker`:** Complete X Daedric Shrine quests
 - **`arena`:** Complete all 21 Arena matches and become Grand Champion
 - **`gatecloser`:** Close X Oblivion Gates
@@ -96,7 +96,7 @@ Displays current game status including:
 - Configured Goal
 
 ### `/dungeons`
-Lists all 149 valid dungeons with boss chests that can be used for dungeon clear checks.
+Lists all 149 valid dungeons that can be used for dungeon clear checks.
 
 Examples:
 - `/dungeons`                    # Shows all dungeons
