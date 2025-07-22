@@ -1,0 +1,224 @@
+﻿# Q. What is this file?
+# A. This file contains options which allow you to configure your multiworld experience while allowing
+#    others to play how they want as well.
+#
+# Q. How do I use it?
+# A. The options in this file are weighted. This means the higher number you assign to a value, the
+#    more chances you have for that option to be chosen. For example, an option like this:
+#
+#    map_shuffle:
+#      on: 5
+#      off: 15
+#
+#    Means you have 5 chances for map shuffle to occur, and 15 chances for map shuffle to be turned
+#    off.
+#
+# Q. I've never seen a file like this before. What characters am I allowed to use?
+# A. This is a .yaml file. You are allowed to use most characters.
+#    To test if your yaml is valid or not, you can use this website:
+#        http://www.yamllint.com/
+#    You can also verify that your Archipelago options are valid at this site:
+#        https://archipelago.gg/check
+
+# Your name in-game, limited to 16 characters.
+#     {player} will be replaced with the player's slot number.
+#     {PLAYER} will be replaced with the player's slot number, if that slot number is greater than 1.
+#     {number} will be replaced with the counter value of the name.
+#     {NUMBER} will be replaced with the counter value of the name, if the counter value is greater than 1.
+name: Player{number}
+
+# Used to describe your yaml. Useful if you have multiple files.
+description: Default Oblivion Remastered Template
+
+game: Oblivion Remastered
+requires:
+  version: 0.6.2 # Version of Archipelago required for this yaml to work as expected.
+
+Oblivion Remastered:
+  # Game Options
+  progression_balancing:
+    # A system that can move progression earlier, to try and prevent the player from getting stuck and bored early.
+    # 
+    # A lower setting means more getting stuck. A higher setting means less getting stuck.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 99
+    random: 0
+    random-low: 0
+    random-high: 0
+    disabled: 0 # equivalent to 0
+    normal: 50 # equivalent to 50
+    extreme: 0 # equivalent to 99
+
+  accessibility:
+    # Set rules for reachability of your items/locations.
+    # 
+    # **Full:** ensure everything can be reached and acquired.
+    # 
+    # **Minimal:** ensure what is needed to reach your goal can be acquired.
+    full: 50
+    minimal: 0
+
+  plando_items:
+    # Generic items plando.
+    []
+
+  goal:
+    # Choose your victory condition:
+    # 
+    # Arena: Complete 21 Arena matches and become Grand Champion
+    # Gatecloser: Close X Oblivion Gates (number set by Gate Count)
+    # Shrine Seeker: Complete X Daedric Shrine quests (number set by Shrine Goal)
+    arena: 0
+    gatecloser: 50
+    shrine_seeker: 0
+
+  gate_count:
+    # Number of Oblivion Gates available as location checks. Gates require Oblivion Gate Keys to access.
+    # 
+    # When Goal is Gatecloser: You must close this many gates for victory.
+    # When Goal is NOT Gatecloser: This many gates are available as location checks.
+    # 
+    # Set to 0 to disable Gate content entirely (only allowed when Goal is not Gatecloser).
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 10
+    5: 50
+    random: 0
+    random-low: 0
+    random-high: 0
+
+  shrine_goal:
+    # For Shrine Seeker goal: How many Daedric Shrine quests you need to complete for victory.
+    # You can complete any of the available shrines to reach this goal.
+    # 
+    # Only used when Goal is Shrine Seeker. Ignored for other goals.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 15
+    5: 50
+    random: 0
+    random-low: 0
+    random-high: 0
+
+  shrine_count:
+    # Number of Daedric Shrine quests available as location checks. Shrines require Shrine Unlock Tokens to access.
+    # 
+    # When Goal is Shrine Seeker: This many total shrines are available, complete any X (set by Shrine Goal) to win.
+    # When Goal is NOT Shrine Seeker: This many shrines are available as location checks.
+    # 
+    # Useful for increased routing flexibility.
+    # Set to 0 to disable shrine content entirely (only allowed when Goal is not Shrine Seeker).
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 15
+    5: 50
+    random: 0
+    random-low: 0
+    random-high: 0
+
+  arena_matches:
+    # Number of Arena matches available as location checks. Arena matches require Arena Rank items to access.
+    # 
+    # When Goal is Arena: This setting is IGNORED - all 21 matches are always available and required for victory.
+    # When Goal is NOT Arena: This many arena matches (1 through X) are available as location checks.
+    # 
+    # Set to 0 to disable arena content entirely (only allowed when Goal is not Arena).
+    # Note: Arena requires Progressive Arena Rank items to unlock each rank's matches.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 21
+    21: 50
+    random: 0
+    random-low: 0
+    random-high: 0
+
+  skill_checks:
+    # Number of Skill Increase locations available as location checks.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 10
+    # Maximum value is 30
+    20: 50
+    random: 0
+    random-low: 0
+    random-high: 0
+
+  dungeon_clears:
+    # Number of Dungeon Clear locations available as location checks.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 30
+    10: 50
+    random: 0
+    random-low: 0
+    random-high: 0
+
+  extra_gate_keys:
+    # Additional Oblivion Gate Keys beyond the base amount needed.
+    # 
+    # Adds extra Gate Keys to the item pool beyond the base number, which is equal to the number of gates. 
+    # Useful for increased routing flexibility and redundancy in case of hard to reach checks.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 5
+    0: 50
+    random: 0
+    random-low: 0
+    random-high: 0
+
+  gate_vision:
+    # Determines how Oblivion Gate map markers are visible:
+    # 
+    # On: Gate markers are visible immediately
+    # Off: Gate markers must be found (vanilla behavior)
+    # Item: Gate markers become visible when you find the Oblivion Gate Vision item (default)
+    'on': 0
+    'off': 0
+    item: 50
+
+  free_offerings:
+    # When enabled, Daedric Shrine offering items are automatically provided when needed.
+    # When disabled, you must find or obtain shrine offerings yourself in the game.
+    'false': 0
+    'true': 50
+
+  # Item & Location Options
+  local_items:
+    # Forces these items to be in their native world.
+    []
+
+  non_local_items:
+    # Forces these items to be outside their native world.
+    []
+
+  start_inventory:
+    # Start with these items.
+    {}
+
+  start_hints:
+    # Start with these item's locations prefilled into the ``!hint`` command.
+    []
+
+  start_location_hints:
+    # Start with these locations and their item prefilled into the ``!hint`` command.
+    []
+
+  exclude_locations:
+    # Prevent these locations from having an important item.
+    []
+
+  priority_locations:
+    # Prevent these locations from having an unimportant item.
+    []
+
+  item_links:
+    # Share part of your item pool with other players.
+    []
