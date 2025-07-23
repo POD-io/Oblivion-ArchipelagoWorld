@@ -1,4 +1,4 @@
-# Oblivion Remastered - Archipelago World
+## Oblivion Remastered - Archipelago World
 
 An Archipelago integration for **The Elder Scrolls IV: Oblivion Remastered**.
 
