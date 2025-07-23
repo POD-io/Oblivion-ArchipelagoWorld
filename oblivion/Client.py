@@ -633,6 +633,20 @@ class OblivionContext(CommonContext):
         """Write game settings for the mod to read."""
         settings_path = os.path.join(self.oblivion_save_path, f"{self.file_prefix}_settings.txt")
         
+        # Check if settings file already exists for this session_id
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path, "r") as f:
+                    for line in f:
+                        if line.startswith("session_id="):
+                            existing_session_id = line.split("=", 1)[1].strip()
+                            if existing_session_id == self.session_id:
+                                # Settings file already exists for this session
+                                return
+                            break
+            except Exception as e:
+                logger.error(f"Error checking existing settings file: {e}")
+        
         free_offerings = bool(self.slot_data.get("free_offerings", False))
         active_shrines = self.slot_data.get("active_shrines", [])
         shrine_offerings = self.slot_data.get("shrine_offerings", {})
