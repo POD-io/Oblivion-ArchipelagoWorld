@@ -13,28 +13,21 @@ This APWorld allows Oblivion Remastered to participate in Archipelago multiworld
 Content in Oblivion Remastered is now gated behind progression items that must be received from the multiworld:
 
 #### Daedric Shrine Access
-The Daedra lords will no longer grant you access to their shrines without first receiving their blessing in the form of a Shrine Token.
-Upon completion of their quest, you no longer receive their artifact, but instead a random item from the multiworld.
+The Daedra lords will no longer grant you access to their shrines without first receiving their blessing in the form of a **Shrine Unlock Token**.<br>
+Upon completion of their quest, you no longer receive their artifact, but instead a random item from the multiworld.<br>
 Each included shrine will have their artifact mixed into the pool of available items.
-- **Requirement:** Shrine Unlock Tokens (e.g., "Azura Shrine Token")
-- **Available:** Random shrines are selected from the 15 total Daedric shrines based on Shrine Count setting
 
 #### Arena Questline
-To take place in Arena matches, you must have received the corresponding Progressive Arena Rank item from the multiworld.
+To take place in Arena matches, you must have received the corresponding **Progressive Arena Rank** item from the multiworld.<br>
 Each rank unlocks a group of 3 matches, which reward a random item from the multiworld.
-- **Requirement:** Progressive Arena Rank items
-- **Progression:** 7 ranks unlock matches in groups of 3
 
 #### Oblivion Gate Access
-To access Oblivion Gates, you must have received an Oblivion Gate Key item from the multiworld.
-Closing a gate will award a random item from the multiworld.
-- **Requirement:** Oblivion Gate Keys
-- **Progression:** Each gate requires a key to access
+To access Oblivion Gates, you must have received an **Oblivion Gate Key** item from the multiworld.<br>
+A key will open any one Oblivion gate. Closing the gate will award a random item from the multiworld.
 
 #### Progressive Shop Stock / Shopsanity
-Innkeepers around Cyrodiil have a series of key items that can be bought in exchange for gold.
+Innkeepers around Cyrodiil have a series of key items that can be bought in exchange for gold.<br>
 These items are location checks that award a random item from the multiworld.
-- **Requirement:** Progressive Shop Stock items
 - **Progression:** 4 ranks unlock higher-value shop items:
   - **Set 1:** Always available (Value 1, 10, 100)
   - **Set 2:** Requires Progressive Shop Stock 1 (Value 2, 20, 200)
@@ -85,6 +78,10 @@ These items are location checks that award a random item from the multiworld.
 
 ### Communication
 File-based communication through `Documents/My Games/Oblivion Remastered/Saved/Archipelago/`
+
+### Session Management
+Each Archipelago seed generates a unique session ID, which is used to distinguish separate playthroughs. When the Oblivion client connects, it uses this session ID to create and manage settings and progress tracking for that specific session. 
+This ensures that multiple games can be played on the same system without conflicts.
 
 ## Helpful Commands
 
