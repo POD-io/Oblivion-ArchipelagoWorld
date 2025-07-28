@@ -134,10 +134,6 @@ location_table: Dict[str, LocationData] = {}
 for i, location_name in enumerate(location_names):
     location_table[location_name] = LocationData(BASE_LOCATION_ID + i, "Cyrodiil")
 
-# Add goal-specific victory event locations (victory-only, no items placed)
-location_table["Arena Grand Champion"] = LocationData(EventId, "Cyrodiil")
-location_table["Shrine Seeker"] = LocationData(EventId, "Cyrodiil")
-location_table["Gatecloser"] = LocationData(EventId, "Cyrodiil") 
 
 # Add shop item locations (progressive shop stock system - always on)
 shop_item_locations = [

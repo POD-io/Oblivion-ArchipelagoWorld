@@ -151,19 +151,9 @@ class OblivionWorld(World):
             )
             cyrodiil_region.locations.append(gate_location)
         
-        # Add goal-specific victory event locations (only for the active goal)
-        goal = self.options.goal.current_key
-        if goal == "arena":
-            # Arena Grand Champion event location will be created in arena section
-            pass
-        elif goal == "gatecloser":
-            # Create Gatecloser event location
-            gate_victory_location = OblivionLocation(self.player, "Gatecloser", EventId, cyrodiil_region)
-            cyrodiil_region.locations.append(gate_victory_location)
-        elif goal == "shrine_seeker":
-            # Create Shrine Seeker event location
-            shrine_victory_location = OblivionLocation(self.player, "Shrine Seeker", EventId, cyrodiil_region)
-            cyrodiil_region.locations.append(shrine_victory_location)
+
+
+
 
         # Add all progressive shop stock locations (always enabled)
         shop_location_names = [
@@ -189,14 +179,6 @@ class OblivionWorld(World):
                     location = OblivionLocation(self.player, location_name, location_data.id, cyrodiil_region)
                     cyrodiil_region.locations.append(location)
             
-            # Add Arena Grand Champion event location only if Arena is the goal
-            if self.options.goal.current_key == "arena":
-                location_name = "Arena Grand Champion"
-                if location_name in location_table:
-                    location_data = location_table[location_name]
-                    # Create as event location (no items placed on it)
-                    location = OblivionLocation(self.player, location_name, location_data.id, cyrodiil_region)
-                    cyrodiil_region.locations.append(location)
         
         # Add Skill Increase locations if enabled
         if self.skills_enabled:
@@ -378,47 +360,6 @@ class OblivionWorld(World):
     
     def create_event(self, event: str) -> Item:
         return OblivionItem(event, ItemClassification.progression, None, self.player)
-
-    def generate_basic(self) -> None:
-        # Create goal-specific victory event locations and place Victory item
-        goal = self.options.goal.current_key
-        
-        if goal == "arena":
-            # Create Arena Grand Champion event location and place Victory item
-            arena_victory_location = self.multiworld.get_location("Arena Grand Champion", self.player)
-            arena_victory_location.place_locked_item(self.create_event("Victory"))
-            # Set access rule: requires completing all 21 arena matches
-            arena_victory_location.access_rule = lambda state: (
-                sum(1 for i in range(1, 22) 
-                    if state.can_reach_location(f"Arena Match {i} Victory", self.player)) >= 21
-            )
-            
-        elif goal == "gatecloser":
-            # Create Gatecloser event location and place Victory item
-            gate_victory_location = self.multiworld.get_location("Gatecloser", self.player)
-            gate_victory_location.place_locked_item(self.create_event("Victory"))
-            # Set access rule: requires completing the goal number of gates
-            required_count = self.gate_count
-            gate_victory_location.access_rule = lambda state, count=required_count: (
-                sum(1 for gate_num in range(1, count + 1) 
-                    if state.can_reach_location(f"Gate {gate_num} Closed", self.player)) >= count
-            )
-            
-        elif goal == "shrine_seeker":
-            # Create Shrine Seeker event location and place Victory item
-            shrine_victory_location = self.multiworld.get_location("Shrine Seeker", self.player)
-            shrine_victory_location.place_locked_item(self.create_event("Victory"))
-            # Set access rule: requires completing the goal number of shrines
-            required_count = self.options.shrine_goal.value
-            active_shrines = list(self.active_shrines)
-            shrine_victory_location.access_rule = lambda state, count=required_count, shrines=active_shrines: (
-                sum(1 for shrine in shrines 
-                    if state.can_reach_location(f"{shrine} Quest Complete", self.player)) >= count
-            )
-        
-        # Set completion condition to check for Victory item
-        self.multiworld.completion_condition[self.player] = lambda state: state.has("Victory", self.player)
-    
 
     
     def fill_slot_data(self) -> Dict[str, Any]:

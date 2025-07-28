@@ -43,17 +43,6 @@ class OblivionTracker:
                 return False
             required_ranks = min(((match_num - 1) // 3) + 1, 7)
             return self.has("Progressive Arena Rank", 1, required_ranks)
-        elif location_name == "Arena Grand Champion":
-            # Arena Grand Champion requires completing all 21 arena matches
-            arena_matches = slot_data.get("arena_matches", 21)
-            if arena_matches < 21:
-                return False
-            # Check if all 21 arena matches are accessible
-            for match_num in range(1, 22):
-                required_ranks = min(((match_num - 1) // 3) + 1, 7)
-                if not self.has("Progressive Arena Rank", 1, required_ranks):
-                    return False
-            return True
             
         # Check gate rules
         if location_name.startswith("Gate ") and location_name.endswith(" Closed"):
@@ -128,8 +117,6 @@ class OblivionTracker:
                 elif "Arena Match" in text:
                     num = int(text.split()[-2])
                     return (2, num)
-                elif "Arena Grand Champion" in text:
-                    return (2, 22)
                 elif "Gate" in text and "Closed" in text:
                     num = int(text.split()[1])
                     return (3, num)
@@ -378,7 +365,6 @@ class OblivionContext(CommonContext):
             "APArenaMatch19Victory": "Arena Match 19 Victory",
             "APArenaMatch20Victory": "Arena Match 20 Victory",
             "APArenaMatch21Victory": "Arena Match 21 Victory",
-            "APArenaGrandChampionVictory": "Arena Grand Champion",
             # Progressive Shop Stock checks
             "APShopTokenValue1CompletionToken": "Shop Item Value 1",
             "APShopTokenValue10CompletionToken": "Shop Item Value 10", 
@@ -479,8 +465,6 @@ class OblivionContext(CommonContext):
                     self.missing_locations -= new_checked
                 if self.tracker:
                     self.tracker.update_locations()
-                # Call victory check after update
-                asyncio.create_task(self._evaluate_victory_condition())
         elif cmd == "LocationInfo":
             pass
             
@@ -504,9 +488,6 @@ class OblivionContext(CommonContext):
         
         # Check for any existing completion files
         await self._check_for_locations(force_check=True)
-        
-        # Evaluate victory condition on reconnect to ensure resilience
-        await self._evaluate_victory_condition()
         
         # Start the file monitoring loop
         self._start_game_loop()
@@ -665,6 +646,14 @@ class OblivionContext(CommonContext):
                     logger.error("Goal not found in slot_data")
                     return
                 f.write(f"goal={goal}\n")
+
+                # Write goal-specific requirements
+                if goal == "shrine_seeker":
+                    shrine_goal = self.slot_data.get("shrine_goal", 5)
+                    f.write(f"goal_required={shrine_goal}\n")
+                elif goal == "gatecloser":
+                    gate_count_required = self.slot_data.get("gate_count_required", 5)
+                    f.write(f"goal_required={gate_count_required}\n")
 
                 # Write progressive shop stock settings (always enabled)
                 f.write(f"progressive_shop_stock=True\n")
@@ -955,26 +944,20 @@ class OblivionContext(CommonContext):
                             logger.error(f"Location '{location_name}' not found in location table")
                     # Silently ignore dungeon clears beyond the configured maximum
                         
-                # Check if this is a completion token or event
+                # Check if this is a Victory completion
+                elif item == "Victory":
+                    if not self.victory_sent:
+                        from NetUtils import ClientStatus
+                        await self.send_msgs([{ "cmd": "StatusUpdate", "status": ClientStatus.CLIENT_GOAL }])
+                        self.victory_sent = True
+                        
+                # Check if this is a completion token
                 elif item in self.completion_tokens:
                     location_name = self.completion_tokens[item]
                     
                     if location_name in name_to_id_map:
                         location_id = name_to_id_map[location_name]
-                        if location_id is None:
-                            # This is an event location - trigger event logic
-                            
-                            # Check for Arena Grand Champion event
-                            if location_name == "Arena Grand Champion":
-                                goal = self.slot_data.get("goal", "shrine_seeker")
-                                if goal == "arena":
-                                    from NetUtils import ClientStatus
-                                    await self.send_msgs([{ "cmd": "StatusUpdate", "status": ClientStatus.CLIENT_GOAL }])
-                                    self.victory_sent = True
-                            else:
-                                # For other event locations, use the normal evaluation
-                                await self._evaluate_victory_condition()
-                        elif location_id in self.missing_locations and location_id not in new_locations:
+                        if location_id in self.missing_locations and location_id not in new_locations:
                             new_locations.append(location_id)
                     else:
                         logger.error(f"Location '{location_name}' not found in location table")
@@ -1020,64 +1003,6 @@ class OblivionContext(CommonContext):
         
         # Keep settings and progressive state files - they should persist between sessions
     
-    def _count_checked_locations(self):
-        """Count checked locations by type using server-tracked data."""
-        if not hasattr(self, 'checked_locations') or not hasattr(self, 'location_names'):
-            return 0, 0, False
-        
-        # Count gates closed
-        gate_count = sum(
-            1 for loc_id in self.checked_locations
-            if self.location_names.lookup_in_game(loc_id, self.game).startswith("Gate ") and
-               self.location_names.lookup_in_game(loc_id, self.game).endswith(" Closed")
-        )
-
-        # Count shrines completed
-        active_shrines = self.slot_data.get("active_shrines", [])
-        shrine_count = sum(
-            1 for loc_id in self.checked_locations
-            if any(f"{shrine} Quest Complete" == self.location_names.lookup_in_game(loc_id, self.game)
-                   for shrine in active_shrines)
-        )
-        
-        return gate_count, shrine_count, False
-
-    async def _evaluate_victory_condition(self):
-        """Evaluate victory condition based on locally tracked location checks."""
-        if self.victory_sent:
-            return
-        if not hasattr(self, 'slot_data') or not self.slot_data:
-            return
-        # Arena is omitted because it's handled by the Arena Grand Champion event which is handled by the Client
-        goal = self.slot_data.get("goal", "shrine_seeker")
-        
-        if goal == "shrine_seeker":
-            required = self.slot_data.get("shrine_goal", 5)
-            # Count shrine quest completions from checked_locations
-            active_shrines = self.slot_data.get("active_shrines", [])
-            shrine_count = sum(
-                1 for loc_id in self.checked_locations
-                if any(f"{shrine} Quest Complete" == self.location_names.lookup_in_game(loc_id, self.game)
-                       for shrine in active_shrines)
-            )
-            if shrine_count >= required and not self.victory_sent:
-                from NetUtils import ClientStatus
-                await self.send_msgs([{ "cmd": "StatusUpdate", "status": ClientStatus.CLIENT_GOAL }])
-                self.victory_sent = True
-                
-        elif goal == "gatecloser":
-            required = self.slot_data.get("gate_count_required", 5)
-            # Count gate closures from checked_locations
-            gate_count = sum(
-                1 for loc_id in self.checked_locations
-                if self.location_names.lookup_in_game(loc_id, self.game).startswith("Gate ") and 
-                self.location_names.lookup_in_game(loc_id, self.game).endswith(" Closed")
-            )
-            if gate_count >= required and not self.victory_sent:
-                from NetUtils import ClientStatus
-                await self.send_msgs([{ "cmd": "StatusUpdate", "status": ClientStatus.CLIENT_GOAL }])
-                self.victory_sent = True
-                
 
     
     async def disconnect(self, allow_autoreconnect: bool = False):
