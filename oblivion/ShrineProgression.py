@@ -8,23 +8,28 @@ offering lookup table for free_offerings mode.
 
 from typing import Dict, List, Set
 
-# Vanilla Oblivion level requirements for each Daedric shrine
-SHRINE_LEVEL_REQUIREMENTS = {
-    "Azura": 2,
-    "Sheogorath": 2,
-    "Namira": 5,
-    "Vaermina": 5,
-    "Sanguine": 8,
-    "Malacath": 10,
-    "Meridia": 10, 
-    "Nocturnal": 10,
-    "Peryite": 10,
-    "Mephala": 15,
-    "Hircine": 17,
-    "Molag Bal": 17,
+# Shrine tier weights for selection (lower numbers = higher selection weight)
+SHRINE_TIER_WEIGHTS = {
+    # Hard
+    "Hermaeus Mora": 20,
     "Boethia": 20,
     "Clavicus Vile": 20,
-    "Hermaeus Mora": 20,
+    
+    # Medium
+    "Azura": 9,
+    "Meridia": 9,
+    "Hircine": 9,
+    "Malacath": 9,
+    "Vaermina": 9,
+    "Peryite": 9,
+    
+    # Easy
+    "Namira": 5,
+    "Nocturnal": 5,
+    "Sanguine": 5,
+    "Sheogorath": 5,
+    "Molag Bal": 5,
+    "Mephala": 5,
 }
 
 # All available shrines
@@ -67,13 +72,13 @@ SHRINE_OFFERINGS = {
 
 def _calculate_shrine_weight(shrine_name: str) -> float:
     """
-    Calculate selection weight for a shrine based on its level.
+    Calculate selection weight for a shrine based on its tier.
     """
-    level_req = SHRINE_LEVEL_REQUIREMENTS.get(shrine_name, 2)
-    return max(15 - (level_req / 2), 1)
+    tier_weight = SHRINE_TIER_WEIGHTS.get(shrine_name, 10)
+    return max(15 - (tier_weight / 2), 1)
 
 def select_active_shrines(total_count: int, random_source, required_shrines: List[str] = None) -> List[str]:
-    """Select which shrines will be active for this seed based on level-weighted randomization."""
+    """Select which shrines will be active for this seed based on tier-weighted randomization."""
     if required_shrines is None:
         required_shrines = []
     
