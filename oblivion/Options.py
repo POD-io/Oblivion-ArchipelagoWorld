@@ -113,6 +113,8 @@ class OblivionGateVision(Choice):
     On: Gate markers are visible immediately
     Off: Gate markers must be found (vanilla behavior)
     Item: Gate markers become visible when you find the Oblivion Gate Vision item (default)
+    
+    Ignored when Gate Count is 0.
     """
     display_name = "Oblivion Gate Vision"
     option_on = 0
