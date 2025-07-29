@@ -468,6 +468,63 @@ class OblivionContext(CommonContext):
         elif cmd == "LocationInfo":
             pass
             
+    def on_print_json(self, args: dict):
+        """Handle PrintJSON messages from server, including item transfers."""
+        # Call parent method for normal handling
+        super().on_print_json(args)
+        
+        # Check if this is an item transfer message
+        if args.get("type") == "ItemSend":
+            item = args.get("item")
+            if not item:
+                return
+                
+            source_player = item.player
+            destination_player = args.get("receiving")
+            self_slot = self.slot
+            
+            # Only process if we're involved (sender or receiver)
+            if self_slot not in [source_player, destination_player]:
+                return
+                
+            # We sent an item to another player
+            if self_slot == source_player and self_slot != destination_player:
+                recipient_name = self.player_names[destination_player]
+                item_name = self.item_names.lookup_in_slot(item.item, destination_player)
+                self._write_transfer_log({
+                    "direction": "sent",
+                    "item": item_name,
+                    "other_player": recipient_name
+                })
+                
+            # We received an item from another player
+            elif self_slot == destination_player and self_slot != source_player:
+                sender_name = self.player_names[source_player]
+                item_name = self.item_names.lookup_in_slot(item.item, self_slot)
+                self._write_transfer_log({
+                    "direction": "received", 
+                    "item": item_name,
+                    "other_player": sender_name
+                })
+    
+    def _write_transfer_log(self, transfer_info: dict):
+        """Write transfer information to a file the mod can read."""
+        if not self.file_prefix:
+            return
+            
+        transfer_file = os.path.join(self.oblivion_save_path, f"{self.file_prefix}_item_events.txt")
+        
+        try:
+            with open(transfer_file, "a") as f:
+                if transfer_info["direction"] == "found":
+                    # Found items include location
+                    f.write(f"{transfer_info['direction']}|{transfer_info['item']}|{transfer_info['location']}\n")
+                else:
+                    # Sent/received items include other player
+                    f.write(f"{transfer_info['direction']}|{transfer_info['item']}|{transfer_info['other_player']}\n")
+        except Exception as e:
+            logger.error(f"Error writing transfer log: {e}")
+            
     async def _setup_after_connection(self):
         """Complete setup after successful connection to slot."""
         if not self.file_prefix or not self.session_id:
@@ -665,6 +722,10 @@ class OblivionContext(CommonContext):
                 # Write gate vision setting
                 gate_vision = self.slot_data.get("gate_vision", "item")
                 f.write(f"gate_vision={gate_vision}\n")
+                
+                # Write gate count setting
+                gate_count = self.slot_data.get("gate_count", 0)
+                f.write(f"gate_count={gate_count}\n")
                 
                 # Write arena settings
                 arena_matches = self.slot_data.get("arena_matches", 0)
@@ -993,17 +1054,22 @@ class OblivionContext(CommonContext):
         if not self.file_prefix or not self.session_id:
             return
             
-        # Only clean up connection tracking files - other files are managed by the game/client
+        # Purge the current connection file to allow for a new connection in between sessions
         connection_file = os.path.join(self.oblivion_save_path, "current_connection.txt")
         try:
             if os.path.exists(connection_file):
                 os.remove(connection_file)
         except Exception:
             pass
+            
+        # Clean up item events file, we only monitor while we are connected to the server
+        item_events_file = os.path.join(self.oblivion_save_path, f"{self.file_prefix}_item_events.txt")
+        try:
+            if os.path.exists(item_events_file):
+                os.remove(item_events_file)
+        except Exception:
+            pass
         
-        # Keep settings and progressive state files - they should persist between sessions
-    
-
     
     async def disconnect(self, allow_autoreconnect: bool = False):
         """Handle disconnection from server."""
