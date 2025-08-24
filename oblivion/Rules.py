@@ -80,17 +80,56 @@ def set_rules(multiworld: MultiWorld, player: int) -> None:
             location = multiworld.get_location(location_name, player)
             location.access_rule = lambda state, count=required_count: state.has("Progressive Shop Stock", player, count)
     
-    # ===== SKILL INCREASE RULES =====
-    # Skill Increase locations are always accessible
+    # [DISABLED_STONES] Wayshrine/Runestone/Doomstone rules disabled - debating if i want this
+    # # ===== WAYSHRINE RULES =====
+    # wayshrine_location = multiworld.get_location("Visit a Wayshrine", player)
+    # wayshrine_location.access_rule = lambda state: True
+    # 
+    # # ===== RUNESTONE RULES =====
+    # runestone_location = multiworld.get_location("Visit a Runestone", player)
+    # runestone_location.access_rule = lambda state: True
+    # 
+    # # ===== DOOMSTONE RULES =====
+    # doomstone_location = multiworld.get_location("Visit a Doomstone", player)
+    # doomstone_location.access_rule = lambda state: True
     
-    # ===== DUNGEON CLEAR RULES =====
-    # Dungeon Clear 1 is always accessible
-    # Dungeon Clear N (N>1) requires only Dungeon Clear N-1
+    # ===== AYLEID WELL RULES =====
+    # Ayleid Well location is always accessible
+    ayleid_well_location = multiworld.get_location("Visit an Ayleid Well", player)
+    ayleid_well_location.access_rule = lambda state: True
+    
+    # ===== CLASS SKILL RULES =====
+    # Class skill locations require Progressive Class Level items
+    if world.selected_class is not None:
+        from .Classes import get_class_skills
+        class_skills = get_class_skills(world.selected_class)
+        
+        # Each Progressive Class Level provides 2 additional skill increases per class skill
+        for level in range(1, world.class_level_maximum + 1):
+            for skill in class_skills:
+                # Each level provides 2 skill increases per skill
+                for skill_level in range(1, 3):  # 2 skill increases per skill per level
+                    # Calculate the skill increase number (1-40 for 20 levels)
+                    skill_increase_num = (level - 1) * 2 + skill_level
+                    location_name = f"{skill} Skill Increase {skill_increase_num}"
+                    
+                    # Each level requires that many Progressive Class Level items
+                    required_levels = level
+                    
+                    location = multiworld.get_location(location_name, player)
+                    location.access_rule = lambda state, levels=required_levels, item_name=world.progressive_class_level_item_name: state.has(item_name, player, levels)
+    
+    # DUNGEON RULES - require corresponding region Access item
     if world.dungeons_enabled:
-        for dungeon_num in range(2, world.dungeon_count + 1):
-            dungeon_location_name = f"Dungeon Clear {dungeon_num}"
-            prev_dungeon_num = dungeon_num - 1
-            prev_location_name = f"Dungeon Clear {prev_dungeon_num}"
-            
-            location = multiworld.get_location(dungeon_location_name, player)
-            location.access_rule = lambda state, prev_name=prev_location_name: state.can_reach(prev_name, "Location", player)
+        from .Locations import DUNGEON_REGIONS
+        for dungeon_name in world.selected_dungeons:
+            region_name = DUNGEON_REGIONS.get(dungeon_name)
+            if not region_name:
+                continue
+            access_item = f"{region_name} Access"
+            location = multiworld.get_location(dungeon_name, player)
+            # If the region is unlocked at start, no item is required; otherwise require the region access item.
+            if region_name in getattr(world, "starting_unlocked_regions", []):
+                location.access_rule = lambda state: True
+            else:
+                location.access_rule = lambda state, item_name=access_item: state.has(item_name, player)

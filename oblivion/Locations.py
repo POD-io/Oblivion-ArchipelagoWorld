@@ -10,11 +10,179 @@ class LocationData(NamedTuple):
     id: int
     region: str = "Cyrodiil"
 
+# Region constants
+REGIONS = [
+    "Blackwood",
+    "Colovian Highlands", 
+    "Gold Coast",
+    "Great Forest",
+    "Heartlands",
+    "Jerall Mountains",
+    "Nibenay Basin",
+    "Nibenay Valley",
+    "Valus Mountains",
+    "West Weald"
+]
+
+# Dungeon to region mapping
+DUNGEON_REGIONS = {
+    # Blackwood Region
+    "Amelion Tomb": "Blackwood",
+    "Atatar": "Blackwood",
+    "Bloodrun Cave": "Blackwood", 
+    "Fieldhouse Cave": "Blackwood",
+    "Fort Doublecross": "Blackwood",
+    "Fort Nomore": "Blackwood",
+    "Fort Redman": "Blackwood",
+    "Fort Redwater": "Blackwood",
+    "Fort Teleman": "Blackwood",
+    "Kindred Cave": "Blackwood",
+    "Onyx Caverns": "Blackwood",
+    "Redwater Slough": "Blackwood",
+    "Reedstand Cave": "Blackwood",
+    "Rockmilk Cave": "Blackwood",
+    "Telepe": "Blackwood",
+    "Undertow Cavern": "Blackwood",
+    "Veyond": "Blackwood",
+    "Welke": "Blackwood",
+    
+    # Colovian Highlands Region
+    "Black Rock Caverns": "Colovian Highlands",
+    "Broken Promises Cave": "Colovian Highlands",
+    "Fort Dirich": "Colovian Highlands",
+    "Fort Hastrel": "Colovian Highlands",
+    "Fort Linchal": "Colovian Highlands",
+    "Fort Rayles": "Colovian Highlands",
+    "Fort Wariel": "Colovian Highlands",
+    "Hrotanda Vale": "Colovian Highlands",
+    "Lipsand Tarn": "Colovian Highlands",
+    "Nonungalo": "Colovian Highlands",
+    "Rock Bottom Caverns": "Colovian Highlands",
+    "Talwinque": "Colovian Highlands",
+    "Trumbe": "Colovian Highlands",
+    "Varondo": "Colovian Highlands",
+    "Wind Cave": "Colovian Highlands",
+    
+    # Gold Coast Region
+    "Garlas Agea": "Gold Coast",
+    "Niryastare": "Gold Coast",
+    "Smoke Hole Cave": "Gold Coast",
+    
+    # Great Forest Region
+    "Ceyatatar": "Great Forest",
+    "Charcoal Cave": "Great Forest",
+    "Crumbling Mine": "Great Forest",
+    "Elenglynn": "Great Forest",
+    "Felgageldt Cave": "Great Forest",
+    "Fingerbowl Cave": "Great Forest",
+    "Fort Ash": "Great Forest",
+    "Fort Carmala": "Great Forest",
+    "Fort Coldcorn": "Great Forest",
+    "Fort Wooden Hand": "Great Forest",
+    "Greenmead Cave": "Great Forest",
+    "Lindai": "Great Forest",
+    "Moranda": "Great Forest",
+    "Moss Rock Cavern": "Great Forest",
+    "Narfinsel": "Great Forest",
+    "Outlaw Endre's Cave": "Great Forest",
+    "Piukanda": "Great Forest",
+    "Robber's Glen Cave": "Great Forest",
+    "Sardavar Leed": "Great Forest",
+    "Serpent Hollow Cave": "Great Forest",
+    "Underpall Cave": "Great Forest",
+    "Unmarked Cave": "Great Forest",
+    "Vindasel": "Great Forest",
+    "Wendir": "Great Forest",
+    "Wenyandawik": "Great Forest",
+    
+    # Heartlands Region
+    "Belda": "Heartlands",
+    "Culotte": "Heartlands",
+    "Dzonot Cave": "Heartlands",
+    "Fanacasecul": "Heartlands",
+    "Fatback Cave": "Heartlands",
+    "Fort Alessia": "Heartlands",
+    "Fort Chalman": "Heartlands",
+    "Fort Empire": "Heartlands",
+    "Fort Homestead": "Heartlands",
+    "Fort Magia": "Heartlands",
+    "Fort Nikel": "Heartlands",
+    "Fort Urasek": "Heartlands",
+    "Fort Variela": "Heartlands",
+    "Fort Virtue": "Heartlands",
+    "Memorial Cave": "Heartlands",
+    "Nagastani": "Heartlands",
+    "Sercen": "Heartlands",
+    "Sideways Cave": "Heartlands",
+    "Sinkhole Cave": "Heartlands",
+    "Veyond Cave": "Heartlands",
+    "Vilverin": "Heartlands",
+    
+    # Jerall Mountains Region
+    "Capstone Cave": "Jerall Mountains",
+    "Fort Horunn": "Jerall Mountains",
+    "Gutted Mine": "Jerall Mountains",
+    "Ninendava": "Jerall Mountains",
+    "Rielle": "Jerall Mountains",
+    "Silver Tooth Cave": "Jerall Mountains",
+    
+    # Nibenay Basin Region
+    "Arrowshaft Cavern": "Nibenay Basin",
+    "Bramblepoint Cave": "Nibenay Basin",
+    "Cracked Wood Cave": "Nibenay Basin",
+    "Crayfish Cave": "Nibenay Basin",
+    "Fort Cedrian": "Nibenay Basin",
+    "Fort Cuptor": "Nibenay Basin",
+    "Fort Entius": "Nibenay Basin",
+    "Fort Facian": "Nibenay Basin",
+    "Fort Naso": "Nibenay Basin",
+    "Hame": "Nibenay Basin",
+    "Lost Boy Cavern": "Nibenay Basin",
+    "Mackamentain": "Nibenay Basin",
+    "Nornal": "Nibenay Basin",
+    "Ondo": "Nibenay Basin",
+    "Rickety Mine": "Nibenay Basin",
+    "Sage Glen Hollow": "Nibenay Basin",
+    "Timberscar Hollow": "Nibenay Basin",
+    "Wendelbek": "Nibenay Basin",
+    "Wenderbek Cave": "Nibenay Basin",
+    
+    # Nibenay Valley Region
+    "Anutwyll": "Nibenay Valley",
+    "Bawn": "Nibenay Valley",
+    "Bloodmayne Cave": "Nibenay Valley",
+    "Fort Gold-Throat": "Nibenay Valley",
+    "Morahame": "Nibenay Valley",
+    "Nenalata": "Nibenay Valley",
+    
+    # Valus Mountains Region
+    "Dark Fissure": "Valus Mountains",
+    "Fanacas": "Valus Mountains",
+    "Fort Scinia": "Valus Mountains",
+    "Kemen": "Valus Mountains",
+    
+    # West Weald Region
+    "Bloodcrust Cavern": "West Weald",
+    "Cursed Mine": "West Weald",
+    "Dasek Moor": "West Weald",
+    "Fort Black Boot": "West Weald",
+    "Fort Istirus": "West Weald",
+    "Fort Vlastarus": "West Weald",
+    "Fyrelight Cave": "West Weald",
+    "Howling Cave": "West Weald",
+    "Nornalhorst": "West Weald",
+}
+
 # Base location ID
 BASE_LOCATION_ID = 4100000
 
 # Location names corresponding to completion tokens that are generated when shrines are completed
 location_names = [
+    # [DISABLED_STONES] Wayshrine/Runestone/Doomstone disabled - debating if i want this
+    # "Visit a Wayshrine",
+    # "Visit a Runestone",
+    # "Visit a Doomstone", 
+    "Visit an Ayleid Well",
     "Azura Quest Complete",
     "Boethia Quest Complete", 
     "Clavicus Vile Quest Complete",
@@ -63,70 +231,10 @@ location_names = [
     "Gate 8 Closed",
     "Gate 9 Closed",
     "Gate 10 Closed",
-    # Skill Increases (30 max)
-    "Skill Increase 1",
-    "Skill Increase 2",
-    "Skill Increase 3",
-    "Skill Increase 4",
-    "Skill Increase 5",
-    "Skill Increase 6",
-    "Skill Increase 7",
-    "Skill Increase 8",
-    "Skill Increase 9",
-    "Skill Increase 10",
-    "Skill Increase 11",
-    "Skill Increase 12",
-    "Skill Increase 13",
-    "Skill Increase 14",
-    "Skill Increase 15",
-    "Skill Increase 16",
-    "Skill Increase 17",
-    "Skill Increase 18",
-    "Skill Increase 19",
-    "Skill Increase 20",
-    "Skill Increase 21",
-    "Skill Increase 22",
-    "Skill Increase 23",
-    "Skill Increase 24",
-    "Skill Increase 25",
-    "Skill Increase 26",
-    "Skill Increase 27",
-    "Skill Increase 28",
-    "Skill Increase 29",
-    "Skill Increase 30",
-    # Dungeon Clears (30 max)
-    "Dungeon Clear 1",
-    "Dungeon Clear 2",
-    "Dungeon Clear 3",
-    "Dungeon Clear 4",
-    "Dungeon Clear 5",
-    "Dungeon Clear 6",
-    "Dungeon Clear 7",
-    "Dungeon Clear 8",
-    "Dungeon Clear 9",
-    "Dungeon Clear 10",
-    "Dungeon Clear 11",
-    "Dungeon Clear 12",
-    "Dungeon Clear 13",
-    "Dungeon Clear 14",
-    "Dungeon Clear 15",
-    "Dungeon Clear 16",
-    "Dungeon Clear 17",
-    "Dungeon Clear 18",
-    "Dungeon Clear 19",
-    "Dungeon Clear 20",
-    "Dungeon Clear 21",
-    "Dungeon Clear 22",
-    "Dungeon Clear 23",
-    "Dungeon Clear 24",
-    "Dungeon Clear 25",
-    "Dungeon Clear 26",
-    "Dungeon Clear 27",
-    "Dungeon Clear 28",
-    "Dungeon Clear 29",
-    "Dungeon Clear 30",
-
 ]
+
+# Add dungeon locations to the main list (IDs) - logic will gate access via region items
+location_names.extend(list(DUNGEON_REGIONS.keys()))
 
 # Create location table
 location_table: Dict[str, LocationData] = {}
@@ -161,3 +269,35 @@ shop_item_locations = [
 
 for i, shop_location in enumerate(shop_item_locations, start=len(location_names)):
     location_table[shop_location] = LocationData(BASE_LOCATION_ID + i, "Cyrodiil") 
+
+# Add class skill locations dynamically
+def generate_class_skill_locations() -> Dict[str, LocationData]:
+    """Generate all possible class skill locations dynamically"""
+    locations = {}
+    location_id = BASE_LOCATION_ID + len(location_names) + len(shop_item_locations)
+    
+    # Generate locations for all 21 skills, up to 40 skill increases each (20 levels * 2 per level)
+    all_skills = [
+        "Acrobatics", "Alchemy", "Alteration", "Armorer", "Athletics", "Blade", "Block", 
+        "Blunt", "Conjuration", "Destruction", "Hand-to-Hand", "Heavy Armor", "Illusion", 
+        "Light Armor", "Marksman", "Mercantile", "Mysticism", "Restoration", "Security", 
+        "Sneak", "Speechcraft"
+    ]
+    
+    for skill in all_skills:
+        for skill_increase_num in range(1, 41):  # 1-40 for up to 20 levels
+            location_name = f"{skill} Skill Increase {skill_increase_num}"
+            locations[location_name] = LocationData(location_id, "Cyrodiil")
+            location_id += 1
+    
+    return locations
+
+# Add class skill locations to the table
+class_skill_locations = generate_class_skill_locations()
+location_table.update(class_skill_locations)
+
+# Add Victory event locations (used for playthrough generation)
+location_table["Shrine Seeker"] = LocationData(EventId, "Cyrodiil")
+location_table["Gatecloser"] = LocationData(EventId, "Cyrodiil")
+location_table["Arena Grand Champion"] = LocationData(EventId, "Cyrodiil") 
+location_table["Dungeon Delver"] = LocationData(EventId, "Cyrodiil")

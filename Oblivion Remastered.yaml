@@ -32,10 +32,12 @@ description: Default Oblivion Remastered Template
 
 game: Oblivion Remastered
 requires:
-  version: 0.6.2 # Version of Archipelago required for this yaml to work as expected.
+  version: 0.6.3 # Version of Archipelago required for this yaml to work as expected.
 
 Oblivion Remastered:
-  # Game Options
+  ################
+  # Game Options #
+  ################
   progression_balancing:
     # A system that can move progression earlier, to try and prevent the player from getting stuck and bored early.
     # 
@@ -60,19 +62,17 @@ Oblivion Remastered:
     full: 50
     minimal: 0
 
-  plando_items:
-    # Generic items plando.
-    []
-
   goal:
     # Choose your victory condition:
     # 
     # Arena: Complete 21 Arena matches and become Grand Champion
     # Gatecloser: Close X Oblivion Gates (number set by Gate Count)
     # Shrine Seeker: Complete X Daedric Shrine quests (number set by Shrine Goal)
+    # Dungeon Delver: Complete all dungeons in this seed. (Regions * Dungeons per Region)
     arena: 0
-    gatecloser: 50
+    gatecloser: 0
     shrine_seeker: 0
+    dungeon_delver: 50
 
   gate_count:
     # Number of Oblivion Gates available as location checks. Gates require Oblivion Gate Keys to access.
@@ -94,7 +94,7 @@ Oblivion Remastered:
     # For Shrine Seeker goal: How many Daedric Shrine quests you need to complete for victory.
     # You can complete any of the available shrines to reach this goal.
     # 
-    # Only used when Goal is Shrine Seeker. Ignored for other goals.
+    # Only relevant when Goal is Shrine Seeker. Ignored for other goals.
     #
     # You can define additional values between the minimum and maximum values.
     # Minimum value is 1
@@ -133,32 +133,101 @@ Oblivion Remastered:
     # You can define additional values between the minimum and maximum values.
     # Minimum value is 0
     # Maximum value is 21
-    21: 50
+    12: 50
     random: 0
     random-low: 0
     random-high: 0
 
-  skill_checks:
-    # Number of Skill Increase locations available as location checks.
+  region_unlocks:
+    # Number of regions that will appear as unlock items.
+    # Only these regions' dungeons will be available as location checks.
+    # 
+    # Note: You are granted one of these region unlocks at the start of the game.
     #
     # You can define additional values between the minimum and maximum values.
-    # Minimum value is 10
-    # Maximum value is 30
-    20: 50
+    # Minimum value is 1
+    # Maximum value is 10
+    5: 50
     random: 0
     random-low: 0
     random-high: 0
 
-  dungeon_clears:
-    # Number of Dungeon Clear locations available as location checks.
+  dungeons_per_region:
+    # Maximum number of dungeons selected from each unlocked region.
+    # If Dungeon Delver is your goal, you will need to complete every dungeon in the selected regions.
+    # 
+    # Note: If a region has fewer dungeons than this value, all of its dungeons are selected.
     #
     # You can define additional values between the minimum and maximum values.
-    # Minimum value is 0
-    # Maximum value is 30
-    10: 50
+    # Minimum value is 1
+    # Maximum value is 24
+    3: 50
     random: 0
     random-low: 0
     random-high: 0
+
+  class_selection:
+    # Choose your character class:
+    # 
+    # OFF: No class location checks
+    # RANDOM: Randomly select a class from all available classes
+    # [Class Names]: Choose a specific class
+    # 
+    # When enabled, all associated major skills for the class will be checks.
+    'off': 0
+    random: 50
+    acrobat: 0
+    agent: 0
+    archer: 0
+    assassin: 0
+    barbarian: 0
+    bard: 0
+    battlemage: 0
+    crusader: 0
+    healer: 0
+    knight: 0
+    mage: 0
+    monk: 0
+    nightblade: 0
+    pilgrim: 0
+    rogue: 0
+    scout: 0
+    sorcerer: 0
+    spellsword: 0
+    thief: 0
+    warrior: 0
+    witchhunter: 0
+
+  class_level_maximum:
+    # Maximum class level when Class Selection is enabled.
+    # This number will determine how many Progressive <Class> items are available in the item pool.
+    # 
+    # Each level provides 14 additional skill checks (2 per class skill).
+    # With the default of 3, this adds 42 checks.
+    # 
+    # Note: This does not change how you level up in-game. This is for AP checks only.
+    # 
+    # Ignored when Class Selection is Off.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 5
+    3: 50
+    random: 0
+    random-low: 0
+    random-high: 0
+
+  start_with_class:
+    # When true: Start with your above selected class unlocked immediately.
+    # 
+    # When false: You must receive the first Progressive <Class> Level in the multiworld
+    # to unlock class skill checks.
+    # 
+    # Note: Your first Class level is always located in Sphere 1. [early locations]
+    # 
+    # Ignored when Class Selection is Off.
+    'false': 50
+    'true': 0
 
   extra_gate_keys:
     # Additional Oblivion Gate Keys beyond the base amount needed.
@@ -180,17 +249,34 @@ Oblivion Remastered:
     # On: Gate markers are visible immediately
     # Off: Gate markers must be found (vanilla behavior)
     # Item: Gate markers become visible when you find the Oblivion Gate Vision item (default)
+    # 
+    # Ignored when Gate Count is 0.
     'on': 0
     'off': 0
     item: 50
 
   free_offerings:
-    # When enabled, Daedric Shrine offering items are automatically provided when needed.
-    # When disabled, you must find or obtain shrine offerings yourself in the game.
+    # When true: Daedric Shrine offering items are automatically provided when needed.
+    # When false: You must find or obtain shrine offerings yourself in the game.
     'false': 0
     'true': 50
 
-  # Item & Location Options
+  fast_travel_item:
+    # When true: Fast travel is disabled until you find the Fast Travel item.
+    'false': 50
+    'true': 0
+
+  dungeon_marker_mode:
+    # Controls how dungeon map markers are revealed and whether fast travel to them is enabled.
+    # 
+    # Reveal and Fast Travel (default): All selected dungeon markers are revealed and fast travel is allowed.
+    # Reveal Only: All selected dungeon markers are shown as "rumors" (faded out), and must be ventured to normally.
+    reveal_and_fast_travel: 50
+    reveal_only: 0
+
+  ###########################
+  # Item & Location Options #
+  ###########################
   local_items:
     # Forces these items to be in their native world.
     []
@@ -221,4 +307,8 @@ Oblivion Remastered:
 
   item_links:
     # Share part of your item pool with other players.
+    []
+
+  plando_items:
+    # Generic items plando.
     []

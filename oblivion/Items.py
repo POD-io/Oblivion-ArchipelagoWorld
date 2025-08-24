@@ -21,6 +21,20 @@ shrine_names = [
 # Progression items - Daedric Shrine Unlock Tokens (required to access shrine quests)
 progression_items = []
 
+# Region unlock items - required to access content in each region
+region_unlock_items = [
+    "Blackwood Access",
+    "Colovian Highlands Access", 
+    "Gold Coast Access",
+    "Great Forest Access",
+    "Heartlands Access",
+    "Jerall Mountains Access",
+    "Nibenay Basin Access",
+    "Nibenay Valley Access",
+    "Valus Mountains Access",
+    "West Weald Access"
+]
+
 # Useful items - Daedric Artifacts (powerful rewards)
 useful_items = []
 
@@ -86,6 +100,12 @@ for shrine_name in shrine_names:
     progression_items.append(token_name)
     current_id += 1
 
+# Add Region Access items (progression)
+for access_name in region_unlock_items:
+    item_table[access_name] = ItemData(current_id, ItemClassification.progression)
+    # Do not automatically add to progression_items here; pool count is decided per seed
+    current_id += 1
+
 # Arena Unlock Tokens (Progressive Item - 7 total for 21 matches)
 arena_unlock_item_name = "Progressive Arena Rank"
 item_table[arena_unlock_item_name] = ItemData(current_id, ItemClassification.progression)
@@ -100,6 +120,45 @@ item_table[progressive_shop_stock_item_name] = ItemData(current_id, ItemClassifi
 # Add 4 instances to progression items list
 for i in range(4):
     progression_items.append(progressive_shop_stock_item_name)
+current_id += 1
+
+# Progressive Class Level Items
+progressive_class_level_items = [
+    "Progressive Acrobat Level",
+    "Progressive Agent Level", 
+    "Progressive Archer Level",
+    "Progressive Assassin Level",
+    "Progressive Barbarian Level",
+    "Progressive Bard Level",
+    "Progressive Battlemage Level",
+    "Progressive Crusader Level",
+    "Progressive Healer Level",
+    "Progressive Knight Level",
+    "Progressive Mage Level",
+    "Progressive Monk Level",
+    "Progressive Nightblade Level",
+    "Progressive Pilgrim Level",
+    "Progressive Rogue Level",
+    "Progressive Scout Level",
+    "Progressive Sorcerer Level",
+    "Progressive Spellsword Level",
+    "Progressive Thief Level",
+    "Progressive Warrior Level",
+    "Progressive Witchhunter Level"
+]
+
+for item_name in progressive_class_level_items:
+    item_table[item_name] = ItemData(current_id, ItemClassification.progression)
+    current_id += 1
+
+# Progressive Armor Set Items (5 total - unlocks tiers 1-5)
+# Tier 0 exists ingame, but we aren't currently using it
+progressive_armor_set_item_name = "Progressive Armor Set"
+item_table[progressive_armor_set_item_name] = ItemData(current_id, ItemClassification.useful)
+
+#for i in range(5):
+for i in range(3):
+    useful_items.append(progressive_armor_set_item_name)
 current_id += 1
 
 # Oblivion Gate Key (added dynamically based on gate_count)
@@ -125,7 +184,71 @@ gate_vision_item_name = "Oblivion Gate Vision"
 item_table[gate_vision_item_name] = ItemData(current_id, ItemClassification.useful)
 current_id += 1
 
+# Add Greater Soulgem Package item
+greater_soulgem_package_item_name = "Greater Soulgem Package"
+item_table[greater_soulgem_package_item_name] = ItemData(current_id, ItemClassification.useful)
+useful_items.append(greater_soulgem_package_item_name)
+current_id += 1
+
+# Add Gold item (each 'Gold' entry gives 500 gold in-game)
+gold_item_name = "Gold"
+item_table[gold_item_name] = ItemData(current_id, ItemClassification.useful)
+useful_items.append(gold_item_name)
+current_id += 1
+
+# Add Lockpick Set item (each entry gives 30 lockpicks in-game)
+lockpick_set_item_name = "Lockpick Set"
+item_table[lockpick_set_item_name] = ItemData(current_id, ItemClassification.useful)
+useful_items.append(lockpick_set_item_name)
+current_id += 1
+
+# Add Fast Travel item
+fast_travel_item_name = "Fast Travel"
+item_table[fast_travel_item_name] = ItemData(current_id, ItemClassification.useful)
+useful_items.append(fast_travel_item_name)
+current_id += 1
+
+# Add Horse item
+horse_item_name = "Horse"
+item_table[horse_item_name] = ItemData(current_id, ItemClassification.useful)
+useful_items.append(horse_item_name)
+current_id += 1
+
+# Add Birth Sign item
+birth_sign_item_name = "Birth Sign"
+item_table[birth_sign_item_name] = ItemData(current_id, ItemClassification.useful)
+useful_items.append(birth_sign_item_name)
+current_id += 1
+
+# Add attribute fortification items
+attribute_useful_items = [
+    "Fortify Strength",
+    "Fortify Intelligence",
+    "Fortify Willpower",
+    "Fortify Agility",
+    "Fortify Speed",
+    "Fortify Endurance",
+    "Fortify Personality",
+    "Fortify Luck",
+]
+
+for attr_item in attribute_useful_items:
+    item_table[attr_item] = ItemData(current_id, ItemClassification.useful)
+    useful_items.append(attr_item)
+    current_id += 1
+
 # Add filler items
 for item_name in filler_items:
     item_table[item_name] = ItemData(current_id, ItemClassification.filler)
     current_id += 1 
+
+# Item groups for hinting
+item_name_groups = {
+    "Shrine Token": [f"{shrine} Shrine Token" for shrine in shrine_names],
+    "Oblivion Gate Key": ["Oblivion Gate Key"],
+    "Progressive Arena Rank": ["Progressive Arena Rank"],
+    "Progressive Shop Stock": ["Progressive Shop Stock"],
+    "Progressive Class Level": progressive_class_level_items,
+    "Fortify Attribute": attribute_useful_items,
+    "Region Access": region_unlock_items,
+} 

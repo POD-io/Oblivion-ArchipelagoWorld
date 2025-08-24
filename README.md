@@ -29,11 +29,17 @@ A key will open any one Oblivion gate. Closing the gate will award a random item
 Innkeepers around Cyrodiil have a series of key items that can be bought in exchange for gold.<br>
 These items are location checks that award a random item from the multiworld.
 - **Progression:** 4 ranks unlock higher-value shop items:
-  - **Set 1:** Always available (Value 1, 10, 100)
-  - **Set 2:** Requires Progressive Shop Stock 1 (Value 2, 20, 200)
-  - **Set 3:** Requires Progressive Shop Stock 2 (Value 3, 30, 300)
-  - **Set 4:** Requires Progressive Shop Stock 3 (Value 4, 40, 400)
-  - **Set 5:** Requires Progressive Shop Stock 4 (Value 5, 50, 500)
+	- **Set 1:** Always available (Value 1, 10, 100)
+	- **Set 2:** Requires Progressive Shop Stock 1 (Value 2, 20, 200)
+	- **Set 3:** Requires Progressive Shop Stock 2 (Value 3, 30, 300)
+	- **Set 4:** Requires Progressive Shop Stock 3 (Value 4, 40, 400)
+	- **Set 5:** Requires Progressive Shop Stock 4 (Value 5, 50, 500)
+
+#### (New) Regions & Dungeons
+Only dungeons in unlocked regions are eligible as location checks. You start with one region unlocked; additional **Region Access** items unlock others. A limited number of dungeons per region (see settings) are selected. If using the Dungeon Delver goal you must clear every selected dungeon.
+
+#### (New) Class System (Optional)
+If enabled, selecting a class adds progressive class level items. Each level unlocks additional class skill increase checks (2 per class skill). You can optionally start with the class or require finding the first level.
 
 ### Core Loop
 1. **Receive progression items** from the multiworld to unlock content
@@ -48,7 +54,7 @@ These items are location checks that award a random item from the multiworld.
 - **Oblivion Gates**
 - **Dungeon Clears**
 - **Shop Items**
-- **Skill Increases**
+- **Class Skill Increases** (replaces generic skill checks)
 
 ## Available Settings
 
@@ -56,23 +62,30 @@ These items are location checks that award a random item from the multiworld.
 - **`shrine_seeker`:** Complete X Daedric Shrine quests
 - **`arena`:** Complete all 21 Arena matches and become Grand Champion
 - **`gatecloser`:** Close X Oblivion Gates
+- **`dungeon_delver`:** Clear all selected dungeons (regions * dungeons per region)
 
 ### Content Scaling
 - **`gate_count`:** Number of Oblivion Gates available (0-10, 0 disables gates)
 - **`shrine_count`:** Number of Daedric Shrine quests available (0-15, 0 disables shrines)
 - **`arena_matches`:** Number of Arena matches available (0-21, 0 disables arena)
 - **`shrine_goal`:** For Shrine Seeker goal: How many shrine quests needed for victory (1-15)
-- **`skill_checks`:** Number of Skill Increase locations (10-30)
-- **`dungeon_clears`:** Number of Dungeon Clear locations (0-30)
+- **`region_unlocks`:** Number of regions that appear as unlock items (1-10, you start with one region)
+- **`dungeons_per_region`:** Maximum dungeons selected per unlocked region (1-24)
+
+### Class System (optional)
+- **`class_selection`:** Off / Random / Specific class
+- **`class_level_maximum`:** Max progressive class levels (1-5)
+- **`start_with_class`:** Start with first class level unlocked
 
 ### Quality of Life
 - **`extra_gate_keys`:** Additional Oblivion Gate Keys beyond required amount (0-5)
 - **`gate_vision`:** How Oblivion Gate map markers are visible:
-  - `on`: Visible immediately
-  - `off`: Must be found (vanilla)
-  - `item`: Visible when finding Oblivion Gate Vision item
+	- `on`: Visible immediately
+	- `off`: Must be found (vanilla)
+	- `item`: Visible when finding Oblivion Gate Vision item
 - **`free_offerings`:** Automatically provide Daedric Shrine offering items when needed
-
+- **`fast_travel_item`:** Lock fast travel until item is received (off by default)
+- **`dungeon_marker_mode`:** Reveal + fast travel (default) or reveal only
 
 ## Technical Details
 
@@ -91,11 +104,3 @@ Displays current game status including:
 - Available content counts (gates, shrines, arena matches, etc.)
 - Gate key information
 - Configured Goal
-
-### `/dungeons`
-Lists all 149 valid dungeons that can be used for dungeon clear checks.
-
-Examples:
-- `/dungeons`                    # Shows all dungeons
-- `/dungeons f`                  # Shows dungeons starting with F
-- `/dungeons cave`               # Shows all dungeons containing "cave"
