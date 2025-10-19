@@ -4,7 +4,7 @@ An Archipelago integration for **The Elder Scrolls IV: Oblivion Remastered**.
 
 ## Overview
 
-This APWorld allows Oblivion Remastered to participate in Archipelago multiworld randomizers. Much content is now gated behind progression items that must be received from the multiworld. Your goals range from completing Daedric shrines, conquering the Arena, or closing Oblivion Gates, and can be configured to a length that suits your desired experience.
+This APWorld integrates Oblivion Remastered into the Archipelago multiworld system. Much of the game's content is now gated behind progression items that must be received from the multiworld. Your goals range from completing the main questline, fulfilling Daedric shrine quests, conquering the Arena, closing Oblivion Gates, or becoming a master dungeoneer. The goal can be configured to a length that suits your desired experience.
 
 ## How it Works
 
@@ -12,13 +12,17 @@ This APWorld allows Oblivion Remastered to participate in Archipelago multiworld
 
 Content in Oblivion Remastered is now gated behind progression items that must be received from the multiworld:
 
+#### Main Quest
+The Amulet of Kings is lost! You must recover it and many other newly introduced items to unlock access to the main quests.
+Your goal is to find and decode the Mysterium Xarxes, gain access to Paradise, and Light the Dragonfires for victory.
+
 #### Daedric Shrine Access
 The Daedra lords will no longer grant you access to their shrines without first receiving their blessing in the form of a **Shrine Unlock Token**.<br>
 Upon completion of their quest, you no longer receive their artifact, but instead a random item from the multiworld.<br>
 Each included shrine will have their artifact mixed into the pool of available items.
 
 #### Arena Questline
-To take place in Arena matches, you must have received the corresponding **Progressive Arena Rank** item from the multiworld.<br>
+To participate in Arena matches, you must have received the corresponding **Progressive Arena Rank** item from the multiworld.<br>
 Each rank unlocks a group of 3 matches, which reward a random item from the multiworld.
 
 #### Oblivion Gate Access
@@ -35,10 +39,10 @@ These items are location checks that award a random item from the multiworld.
 	- **Set 4:** Requires Progressive Shop Stock 3 (Value 4, 40, 400)
 	- **Set 5:** Requires Progressive Shop Stock 4 (Value 5, 50, 500)
 
-#### (New) Regions & Dungeons
+#### Regions & Dungeons
 Only dungeons in unlocked regions are eligible as location checks. You start with one region unlocked; additional **Region Access** items unlock others. A limited number of dungeons per region (see settings) are selected. If using the Dungeon Delver goal you must clear every selected dungeon.
 
-#### (New) Class System (Optional)
+#### Class System (Optional)
 If enabled, selecting a class adds progressive class level items. Each level unlocks additional class skill increase checks (2 per class skill). You can optionally start with the class or require finding the first level.
 
 ### Core Loop
@@ -49,6 +53,7 @@ If enabled, selecting a class adds progressive class level items. Each level unl
 
 ## Supported Locations
 
+- **Main Questline**
 - **Daedric Shrine Quests**
 - **Arena Matches**
 - **Oblivion Gates**
@@ -62,7 +67,8 @@ If enabled, selecting a class adds progressive class level items. Each level unl
 - **`shrine_seeker`:** Complete X Daedric Shrine quests
 - **`arena`:** Complete all 21 Arena matches and become Grand Champion
 - **`gatecloser`:** Close X Oblivion Gates
-- **`dungeon_delver`:** Clear all selected dungeons (regions * dungeons per region)
+- **`dungeon_delver`:** Clear all selected dungeons (regions x dungeons per region)
+- **`light_the_dragonfires`:**  Complete the main questline
 
 ### Content Scaling
 - **`gate_count`:** Number of Oblivion Gates available (0-10, 0 disables gates)
@@ -72,20 +78,38 @@ If enabled, selecting a class adds progressive class level items. Each level unl
 - **`region_unlocks`:** Number of regions that appear as unlock items (1-10, you start with one region)
 - **`dungeons_per_region`:** Maximum dungeons selected per unlocked region (1-24)
 
-### Class System (optional)
-- **`class_selection`:** Off / Random / Specific class
-- **`class_level_maximum`:** Max progressive class levels (1-5)
-- **`start_with_class`:** Start with first class level unlocked
+### Class System
+- **`class_selection`:** Choose your character class (default: Random)
+  - **`off`:** No class location checks
+  - **`random`:** Randomly select a class
+  - **Specific classes:** Acrobat, Agent, Archer, Assassin, Barbarian, Bard, Battlemage, Crusader, Healer, Knight, Mage, Monk, Nightblade, Pilgrim, Rogue, Scout, Sorcerer, Spellsword, Thief, Warrior, Witchhunter
+- **`class_level_maximum`:** Max progressive class levels (1-5, default 3)
+  - Each level provides 14 additional skill checks (2 per class skill)
+- **`start_with_class`:** Start with first class level unlocked (default: Off)
+  - When false, you must receive the first Progressive Class Level from the multiworld
+  - Note: First class level is always in Sphere 1 (early locations)
+- **`excluded_skills`:** Exclude specific skills from generating checks
+  - Only affects major skills for your selected class
+  - Set any skill to 1 to exclude it from check generation
 
 ### Quality of Life
-- **`extra_gate_keys`:** Additional Oblivion Gate Keys beyond required amount (0-5)
-- **`gate_vision`:** How Oblivion Gate map markers are visible:
-	- `on`: Visible immediately
-	- `off`: Must be found (vanilla)
-	- `item`: Visible when finding Oblivion Gate Vision item
-- **`free_offerings`:** Automatically provide Daedric Shrine offering items when needed
-- **`fast_travel_item`:** Lock fast travel until item is received (off by default)
-- **`dungeon_marker_mode`:** Reveal + fast travel (default) or reveal only
+- **`extra_gate_keys`:** Additional Oblivion Gate Keys beyond required amount (0-5, default 0)
+  - Useful for increased routing flexibility
+- **`gate_vision`:** How Oblivion Gate map markers are visible (default: Item)
+  - **`on`:** Visible immediately
+  - **`off`:** Must be found (vanilla behavior)
+  - **`item`:** Visible when finding Oblivion Gate Vision item
+- **`free_offerings`:** Automatically provide Daedric Shrine offering items when needed (default: On)
+- **`fast_travel_item`:** Lock fast travel until item is received (default: Off)
+- **`dungeon_marker_mode`:** Control dungeon map markers (default: Reveal and Fast Travel)
+  - **`reveal_and_fast_travel`:** All selected dungeon markers revealed and fast travel enabled
+  - **`reveal_only`:** Dungeon markers shown as "rumors" (faded), must venture to them normally
+- **`shop_scout_type`:** How shop item information is displayed (default: Summary)
+  - **`off`:** No shop scouting information displayed
+  - **`summary`:** Shows receiving player name and item classification (Progression/Useful/Filler)
+  - **`player_only`:** Shows only the receiving player name
+  - **`full_info`:** Shows complete item name and receiving player
+- **`fast_arena`:** Skip arena announcer dialogue and fight immediately (default: Off)
 
 ## Technical Details
 
@@ -95,6 +119,7 @@ File-based communication through `Documents/My Games/Oblivion Remastered/Saved/A
 ### Session Management
 Each Archipelago seed generates a unique session ID, which is used to distinguish separate playthroughs. When the Oblivion client connects, it uses this session ID to create and manage settings and progress tracking for that specific session. 
 This ensures that multiple games can be played on the same system without conflicts.
+If you ever wish to replay a seed, you must delete the corresponding session files from the above location before beginning a new game.
 
 ## Helpful Commands
 
