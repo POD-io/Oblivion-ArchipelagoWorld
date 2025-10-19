@@ -92,6 +92,22 @@ def get_class_skills(class_name: str) -> List[str]:
     class_data = get_class_data(class_name)
     return class_data.skills if class_data else []
 
+def get_filtered_class_skills(class_name: str, excluded_skills: set) -> List[str]:
+    """
+    Get the skills associated with a given class, excluding specified skills.
+    
+    Args:
+        class_name: The name of the class
+        excluded_skills: A set of skill names to exclude
+        
+    Returns:
+        List of skill names for the class, with excluded skills filtered out
+    """
+    all_skills = get_class_skills(class_name)
+    if not excluded_skills:
+        return all_skills
+    return [skill for skill in all_skills if skill not in excluded_skills]
+
 def is_valid_class_skill(class_name: str, skill_name: str) -> bool:
     """Check if a skill is valid for a given class."""
     class_skills = get_class_skills(class_name)

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from Options import Choice, DefaultOnToggle, Toggle, Range, PerGameCommonOptions
+from Options import Choice, DefaultOnToggle, Toggle, Range, PerGameCommonOptions, OptionDict
 
 # Goal Settings
 class OblivionGoal(Choice):
@@ -9,14 +9,16 @@ class OblivionGoal(Choice):
     Arena: Complete 21 Arena matches and become Grand Champion
     Gatecloser: Close X Oblivion Gates (number set by Gate Count)
     Shrine Seeker: Complete X Daedric Shrine quests (number set by Shrine Goal)
-    Dungeon Delver: Complete all dungeons in this seed. (Regions * Dungeons per Region)
+    Dungeon Delver: Complete all dungeons in your seed. (Regions * Dungeons per Region)
+    Light the Dragonfires: Complete the Main Quest
     """
     display_name = "Goal"
     option_arena = 0
     option_gatecloser = 1
     option_shrine_seeker = 2
     option_dungeon_delver = 3
-    default = 3
+    option_light_the_dragonfires = 4
+    default = 4
 
 class GateCount(Range):
     """
@@ -24,6 +26,7 @@ class GateCount(Range):
     
     When Goal is Gatecloser: You must close this many gates for victory.
     When Goal is NOT Gatecloser: This many gates are available as location checks.
+    When Goal is Light the Dragonfires: This setting is ignored (set to 0 automatically).
     
     Set to 0 to disable Gate content entirely (only allowed when Goal is not Gatecloser).
     """
@@ -152,6 +155,48 @@ class StartWithClass(Toggle):
     display_name = "Start With Class"
     default = 0
 
+class ExcludedSkills(OptionDict):
+    """
+    Exclude specific skills from the class system.
+    
+    Set a skill to 1 (or any non-zero #) to exclude it (it will not generate checks).
+    
+    Only affects major skills for your selected class.
+    Example: If you're an Acrobat and exclude Acrobatics and Sneak, 
+    you'll only get checks for your remaining 5 major skills.
+    
+    Ignored when Class Selection is Off.
+    """
+    display_name = "Excluded Skills"
+    default = {
+        "Acrobatics": 0,
+        "Alchemy": 0,
+        "Alteration": 0,
+        "Armorer": 0,
+        "Athletics": 0,
+        "Blade": 0,
+        "Block": 0,
+        "Blunt": 0,
+        "Conjuration": 0,
+        "Destruction": 0,
+        "Hand-to-Hand": 0,
+        "Heavy Armor": 0,
+        "Illusion": 0,
+        "Light Armor": 0,
+        "Marksman": 0,
+        "Mercantile": 0,
+        "Mysticism": 0,
+        "Restoration": 0,
+        "Security": 0,
+        "Sneak": 0,
+        "Speechcraft": 0,
+    }
+    valid_keys = frozenset([
+        "Acrobatics", "Alchemy", "Alteration", "Armorer", "Athletics", "Blade", "Block", "Blunt",
+        "Conjuration", "Destruction", "Hand-to-Hand", "Heavy Armor", "Illusion", "Light Armor",
+        "Marksman", "Mercantile", "Mysticism", "Restoration", "Security", "Sneak", "Speechcraft"
+    ])
+
 # Content Counts
 class ArenaMatches(Range):
     """
@@ -224,6 +269,32 @@ class DungeonMarkerMode(Choice):
     option_reveal_only = 1
     default = 0
 
+class ShopScoutType(Choice):
+    """
+    How shop item scouting displays information.
+    
+    Off: No shop scouting - shop tab will not display any information
+    Summary: Shows the receiving player name and item classification (Progression/Useful/Filler) - default
+    Player Only: Shows only the receiving player name for each shop item
+    Full Info: Shows the complete item name and receiving player (creates !hint commands)
+    
+    Note: Trap items are always disguised in Summary mode.
+    """
+    display_name = "Shop Scout Type"
+    option_off = 0
+    option_summary = 1
+    option_player_only = 2
+    option_full_info = 3
+    default = 1
+
+class FastArena(Toggle):
+    """
+    When true: Skip arena announcer dialogue before matches and fight immediately.
+    When false: Must wait for announcer dialogue before match begins (default).
+    """
+    display_name = "Fast Arena"
+    default = 0
+
 @dataclass
 class OblivionOptions(PerGameCommonOptions):
     # Goal Settings
@@ -241,6 +312,7 @@ class OblivionOptions(PerGameCommonOptions):
     class_selection: ClassSelection
     class_level_maximum: ClassLevelMaximum
     start_with_class: StartWithClass
+    excluded_skills: ExcludedSkills
 
     # Quality of Life   
     extra_gate_keys: ExtraGateKeys
@@ -248,4 +320,6 @@ class OblivionOptions(PerGameCommonOptions):
     free_offerings: FreeOfferings
     fast_travel_item: FastTravelItem
     dungeon_marker_mode: DungeonMarkerMode
+    shop_scout_type: ShopScoutType
+    fast_arena: FastArena
     # useful_items_percentage: UsefulItemsPercentage

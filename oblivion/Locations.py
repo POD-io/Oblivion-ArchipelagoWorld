@@ -121,7 +121,6 @@ DUNGEON_REGIONS = {
     # Jerall Mountains Region
     "Capstone Cave": "Jerall Mountains",
     "Fort Horunn": "Jerall Mountains",
-    "Gutted Mine": "Jerall Mountains",
     "Ninendava": "Jerall Mountains",
     "Rielle": "Jerall Mountains",
     "Silver Tooth Cave": "Jerall Mountains",
@@ -173,6 +172,24 @@ DUNGEON_REGIONS = {
     "Nornalhorst": "West Weald",
 }
 
+# Birthsign Doomstone to region mapping
+# These are gated by region access items when region system is enabled.
+DOOMSTONE_REGIONS = {
+    "Visit the Tower Stone": "Heartlands",
+    "Visit the Steed Stone": "Heartlands",
+    "Visit the Warrior Stone": "West Weald",
+    "Visit the Apprentice Stone": "West Weald",
+    "Visit the Atronach Stone": "Colovian Highlands",
+    "Visit the Lord Stone": "Colovian Highlands",
+    "Visit the Lady Stone": "Gold Coast",
+    "Visit the Thief Stone": "Great Forest",
+    "Visit the Shadow Stone": "Nibenay Basin",
+    "Visit the Mage Stone": "Nibenay Basin",
+    "Visit the Lover Stone": "Nibenay Valley",
+    "Visit the Ritual Stone": "Blackwood",
+    "Visit the Serpent Stone": "Blackwood",
+}
+
 # Base location ID
 BASE_LOCATION_ID = 4100000
 
@@ -183,6 +200,20 @@ location_names = [
     # "Visit a Runestone",
     # "Visit a Doomstone", 
     "Visit an Ayleid Well",
+    # Birthsign Doomstones (per-region)
+    "Visit the Tower Stone",
+    "Visit the Steed Stone",
+    "Visit the Warrior Stone",
+    "Visit the Apprentice Stone",
+    "Visit the Atronach Stone",
+    "Visit the Lord Stone",
+    "Visit the Lady Stone",
+    "Visit the Thief Stone",
+    "Visit the Shadow Stone",
+    "Visit the Mage Stone",
+    "Visit the Lover Stone",
+    "Visit the Ritual Stone",
+    "Visit the Serpent Stone",
     "Azura Quest Complete",
     "Boethia Quest Complete", 
     "Clavicus Vile Quest Complete",
@@ -296,8 +327,72 @@ def generate_class_skill_locations() -> Dict[str, LocationData]:
 class_skill_locations = generate_class_skill_locations()
 location_table.update(class_skill_locations)
 
-# Add Victory event locations (used for playthrough generation)
+# Add event & victory locations (used for playthrough generation)
 location_table["Shrine Seeker"] = LocationData(EventId, "Cyrodiil")
 location_table["Gatecloser"] = LocationData(EventId, "Cyrodiil")
 location_table["Arena Grand Champion"] = LocationData(EventId, "Cyrodiil") 
 location_table["Dungeon Delver"] = LocationData(EventId, "Cyrodiil")
+location_table["Light the Dragonfires"] = LocationData(EventId, "Cyrodiil")
+location_table["Weynon Priory Quest Complete"] = LocationData(EventId, "Cyrodiil")
+location_table["Paradise Complete"] = LocationData(EventId, "Cyrodiil")
+
+# ===== MAIN QUEST LOCATIONS =====
+# Organized by chapter: checks up to Weynon Priory, checks from MQ05 to pre-Paradise, and Paradise to victory.
+
+# Chapter 1: Tutorial through Weynon Priory (MQ01-MQ04)
+mq_chapter_1_locations = [
+    "Deliver the Amulet",
+    "Find the Heir",
+    "Breaking the Siege of Kvatch: Gate Closed",
+    "Breaking the Siege of Kvatch",
+    "Weynon Priory",
+    "Battle for Castle Kvatch",  # Optional side quest (MS49)
+]
+for loc in mq_chapter_1_locations:
+    if loc not in location_table:
+        location_table[loc] = LocationData(BASE_LOCATION_ID + len(location_table), "Cyrodiil")
+
+# Chapter 2: MQ05 through MQ13 (Path of Dawn, Dagon Shrine, Spies, blood/artifact arcs, Bruma defense)
+mq_chapter_2_locations = [
+    # MQ05 - The Path of Dawn
+    "The Path of Dawn: Acquire Commentaries Vol I",
+    "The Path of Dawn: Acquire Commentaries Vol II",
+    "The Path of Dawn: Acquire Commentaries Vol III",
+    "The Path of Dawn: Acquire Commentaries Vol IV",
+    "The Path of Dawn",
+    # MQ06 - Dagon Shrine
+    "Dagon Shrine: Mysterium Xarxes Acquired",
+    "Dagon Shrine: Kill Harrow",
+    "Dagon Shrine",
+    "Attack on Fort Sutch",  # Optional side quest after Dagon Shrine
+    # MQ07 - Spies
+    "Spies: Kill Saveri Faram",
+    "Spies: Kill Jearl",
+    "Spies",
+    # MQ08-MQ13 - Blood/artifact quests and Bruma defense
+    "Blood of the Daedra",
+    "Blood of the Divines",
+    "Blood of the Divines: Free Spirit 1",
+    "Blood of the Divines: Free Spirit 2",
+    "Blood of the Divines: Free Spirit 3",
+    "Blood of the Divines: Free Spirit 4",
+    "Blood of the Divines: Armor of Tiber Septim",
+    "Bruma Gate",
+    "Miscarcand",
+    "Miscarcand: Great Welkynd Stone",
+    "Defense of Bruma",
+    "Great Gate",
+]
+for loc in mq_chapter_2_locations:
+    if loc not in location_table:
+        location_table[loc] = LocationData(BASE_LOCATION_ID + len(location_table), "Cyrodiil")
+
+# Chapter 3: Paradise through Victory (MQ14-MQ15)
+mq_chapter_3_locations = [
+    "Paradise: Bands of the Chosen Acquired",
+    "Paradise: Bands of the Chosen Removed",
+    "Paradise",
+]
+for loc in mq_chapter_3_locations:
+    if loc not in location_table:
+        location_table[loc] = LocationData(BASE_LOCATION_ID + len(location_table), "Cyrodiil")

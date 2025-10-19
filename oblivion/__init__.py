@@ -17,7 +17,7 @@ from .Locations import location_table, OblivionLocation, EventId, LocationData, 
 from .Rules import set_rules
 from .Options import OblivionOptions
 from .ShrineProgression import select_active_shrines, get_shrine_offerings
-from .Classes import get_class_data, get_all_class_names, get_class_skills
+from .Classes import get_class_data, get_all_class_names, get_class_skills, get_filtered_class_skills
 
 # Client registration
 def launch_client(*args):
@@ -25,12 +25,15 @@ def launch_client(*args):
     from worlds.LauncherComponents import launch as launch_component
     launch_component(launch, name="Oblivion Client", args=args)
 
-from worlds.LauncherComponents import Component, components, Type, launch as launch_component
+from worlds.LauncherComponents import Component, components, Type, launch as launch_component, icon_paths
 components.append(Component("Oblivion Remastered Client", 
                            game_name="Oblivion Remastered", 
                            func=launch_client, 
                            component_type=Type.CLIENT,
+                           icon="oblivion",
                            supports_uri=True))
+
+icon_paths["oblivion"] = f"ap:{__name__}/icons/oblivion.png"
 
 logger = logging.getLogger("Oblivion")
 
@@ -133,6 +136,14 @@ class OblivionWorld(World):
         # Set class level maximum
         self.class_level_maximum = int(pt.get("class_level_maximum", self.options.class_level_maximum.value)) if pt else self.options.class_level_maximum.value
 
+        # Get excluded skills from options (dict format: skill_name: 1 = excluded, 0 = included)
+        if self.selected_class is not None:
+            # Extract skills where value is 1 (excluded)
+            skill_dict = self.options.excluded_skills.value
+            self.excluded_skills = {skill for skill, is_excluded in skill_dict.items() if is_excluded}
+        else:
+            self.excluded_skills = set()
+
         # Select the progressive class level item name based on chosen class
         if self.selected_class is not None:
             if pt and pt.get("progressive_class_level_item_name"):
@@ -158,8 +169,12 @@ class OblivionWorld(World):
         self.dungeons_enabled = self.using_region_dungeons
         
         # Set counts based on settings
-        self.gate_count = self.options.gate_count.value
-        self.skill_count = 0  # No vanilla skill checks
+        # Suppress gate content entirely when Light the Dragonfires is the goal
+        if goal == "light_the_dragonfires":
+            self.gate_count = 0
+        else:
+            self.gate_count = self.options.gate_count.value
+        self.skill_count = 0
         # Total dungeons will be computed after selecting regions/dungeons
         self.dungeon_count = 0
         
@@ -170,7 +185,8 @@ class OblivionWorld(World):
             self.arena_count = self.options.arena_matches.value if self.arena_enabled else 0
         
         # Handle gate vision setting
-        self.gate_vision_setting = self.options.gate_vision.current_key
+        # Gate vision item suppressed when gates disabled or MQ goal active
+        self.gate_vision_setting = self.options.gate_vision.current_key if (self.gate_count > 0 and goal != "light_the_dragonfires") else "off"
         
         # Handle fast travel item setting
         self.fast_travel_item_enabled = self.options.fast_travel_item.value
@@ -218,6 +234,15 @@ class OblivionWorld(World):
             self.active_shrines = []
             self.shrine_offerings = {}
 
+        # MQ goal adjustment: remove Azura from randomized shrine pool so vanilla Azura quest remains available for Blood of the Daedra
+        try:
+            if goal == "light_the_dragonfires" and "Azura" in self.active_shrines:
+                self.active_shrines = [s for s in self.active_shrines if s != "Azura"]
+                # Also drop offering mapping if present
+                self.shrine_offerings.pop("Azura", None)
+        except Exception:
+            pass
+
         # Dungeon selection
         if self.using_region_dungeons:
             from .Locations import REGIONS, DUNGEON_REGIONS
@@ -236,12 +261,42 @@ class OblivionWorld(World):
                 yaml_regions = sorted(list(set(region_unlock_items) & start_inv_keys))
                 self.starting_unlocked_regions = [r.replace(" Access", "") for r in yaml_regions]
             # Choose regions (or take from passthrough)
+            # Compute guaranteed regions from start_inventory once
+            start_inv = self.options.start_inventory.value or {}
+            start_inv_keys = set(start_inv.keys()) if hasattr(start_inv, 'keys') else set(start_inv)
+            yaml_regions = set(region_unlock_items) & start_inv_keys
+            guaranteed_regions = [r.replace(" Access", "") for r in yaml_regions if r.endswith(" Access") and r.replace(" Access", "") in REGIONS]
+
             if pt and pt.get("selected_regions"):
-                self.selected_regions = list(pt["selected_regions"])[:self.region_unlocks_count]
+                base_selected = list(pt["selected_regions"])[: self.region_unlocks_count]
+                # Add any newly guaranteed regions not already present
+                missing = [r for r in guaranteed_regions if r not in base_selected]
+                total_after = len(base_selected) + len(missing)
+                if missing:
+                    if total_after > self.region_unlocks_count:
+                        raise Exception(
+                            f"start_inventory adds guaranteed regions ({', '.join(missing)}) exceeding region_unlocks ({self.region_unlocks_count}) when combined with passthrough-selected regions ({', '.join(base_selected)}). Increase region_unlocks or remove extras."
+                        )
+                    base_selected.extend(missing)
+                self.selected_regions = base_selected
+                if guaranteed_regions:
+                    logger.debug(
+                        f"Player {self.player}: Passthrough regions after merging guarantees: {', '.join(self.selected_regions)} (guaranteed: {', '.join(guaranteed_regions)})"
+                    )
             else:
-                regions_available = list(REGIONS)
-                regions_to_pick = min(self.region_unlocks_count, len(regions_available))
-                self.selected_regions = self.multiworld.random.sample(regions_available, regions_to_pick)
+                if len(guaranteed_regions) > self.region_unlocks_count:
+                    raise Exception(
+                        f"start_inventory specifies {len(guaranteed_regions)} region Access items ({', '.join(sorted(guaranteed_regions))}) "
+                        f"but region_unlocks is {self.region_unlocks_count}. Increase region_unlocks or remove extras."
+                    )
+                remaining_pool = [r for r in REGIONS if r not in guaranteed_regions]
+                slots_left = self.region_unlocks_count - len(guaranteed_regions)
+                random_picks = self.multiworld.random.sample(remaining_pool, slots_left) if slots_left > 0 else []
+                self.selected_regions = guaranteed_regions + random_picks
+                if guaranteed_regions:
+                    logger.debug(
+                        f"Player {self.player}: Guaranteed regions from start_inventory: {', '.join(sorted(guaranteed_regions))}; randomly added: {', '.join(random_picks)}"
+                    )
             # For each region, choose up to dungeons_per_region
             self.selected_dungeons_by_region = {}
             selected_flat: List[str] = []
@@ -332,19 +387,31 @@ class OblivionWorld(World):
         #     location = OblivionLocation(self.player, runestone_location_name, location_data.id, cyrodiil_region)
         #     cyrodiil_region.locations.append(location)
         # 
-        # # Add doomstone location (always accessible)
-        # doomstone_location_name = "Visit a Doomstone"
-        # if doomstone_location_name in location_table:
-        #     location_data = location_table[doomstone_location_name]
-        #     location = OblivionLocation(self.player, doomstone_location_name, location_data.id, cyrodiil_region)
-        #     cyrodiil_region.locations.append(location)
-            
+
         # Add ayleid well location (always accessible)
         ayleid_well_location_name = "Visit an Ayleid Well"
         if ayleid_well_location_name in location_table:
             location_data = location_table[ayleid_well_location_name]
             location = OblivionLocation(self.player, ayleid_well_location_name, location_data.id, cyrodiil_region)
             cyrodiil_region.locations.append(location)
+
+        # Defer Birthsign Doomstone placement until after region AP regions are created (so they live in their region).
+        birthsign_stones = [
+            ("Visit the Tower Stone", "Heartlands"),
+            ("Visit the Steed Stone", "Heartlands"),
+            ("Visit the Warrior Stone", "West Weald"),
+            ("Visit the Apprentice Stone", "West Weald"),
+            ("Visit the Atronach Stone", "Colovian Highlands"),
+            ("Visit the Lord Stone", "Colovian Highlands"),
+            ("Visit the Lady Stone", "Gold Coast"),
+            ("Visit the Thief Stone", "Great Forest"),
+            ("Visit the Shadow Stone", "Nibenay Basin"),
+            ("Visit the Mage Stone", "Nibenay Basin"),
+            ("Visit the Lover Stone", "Nibenay Valley"),
+            ("Visit the Ritual Stone", "Blackwood"),
+            ("Visit the Serpent Stone", "Blackwood"),
+        ]
+        self._birthsign_stones = birthsign_stones
         
         # Add shrine locations only if shrines are enabled
         if self.shrines_enabled:
@@ -400,7 +467,7 @@ class OblivionWorld(World):
         
         # Add Class Skill locations if class system is enabled
         if self.selected_class is not None:
-            class_skills = get_class_skills(self.selected_class)
+            class_skills = get_filtered_class_skills(self.selected_class, self.excluded_skills)
             # Each Progressive Class Level provides 2 additional skill increases per class skill
             for level in range(1, self.class_level_maximum + 1):
                 for skill in class_skills:
@@ -427,11 +494,11 @@ class OblivionWorld(World):
                 entrance_name = f"Enter {region_name}"
                 entrance = Entrance(self.player, entrance_name, cyrodiil_region)
                 cyrodiil_region.exits.append(entrance)
-                # If this region is unlocked at the start, do not gate the entrance.
-                if region_name not in getattr(self, "starting_unlocked_regions", []):
-                    def make_rule(rn: str):
-                        return lambda state, reg=rn: state.has(f"{reg} Access", self.player)
-                    entrance.access_rule = make_rule(region_name)
+                # Always gate by the region's Access item so the item remains true progression.
+                # this keeps the item in playthrough sphere 0 instead of being filtered out
+                def make_rule(rn: str):
+                    return lambda state, reg=rn: state.has(f"{reg} Access", self.player)
+                entrance.access_rule = make_rule(region_name)
                 entrance.connect(ap_region)
 
             # Place dungeons in their respective region nodes
@@ -444,6 +511,16 @@ class OblivionWorld(World):
                         location_data = location_table[dungeon_name]
                         location = OblivionLocation(self.player, dungeon_name, location_data.id, ap_region)
                         ap_region.locations.append(location)
+
+            # Place doomstones into their region nodes only if that region is selected
+            for stone_name, region_name in getattr(self, '_birthsign_stones', []):
+                if region_name not in region_nodes:
+                    continue  # region not selected -> stone location excluded from seed
+                if stone_name in location_table:
+                    data = location_table[stone_name]
+                    stone_loc = OblivionLocation(self.player, stone_name, data.id, region_nodes[region_name])
+                    region_nodes[region_name].locations.append(stone_loc)
+        # If dungeons/regions are disabled, doomstones are not included at all
         
         # Connect menu to game
         connection = Entrance(self.player, "New Game", menu_region)
@@ -487,13 +564,85 @@ class OblivionWorld(World):
                 location_data = location_table["Dungeon Delver"]
                 dungeon_victory_location = OblivionLocation(self.player, "Dungeon Delver", location_data.id, cyrodiil_region)
                 cyrodiil_region.locations.append(dungeon_victory_location)
+        elif goal == "light_the_dragonfires":
+            # MQ locations organized by chapter matching Locations.py structure:
+            # - Chapter 1: Up to Weynon Priory (tutorial/initial quests; optional MS49)
+            # - Chapter 2: MQ05 through pre-Paradise (Dagon Shrine, Spies, blood/artifact arcs)
+            # - Chapter 3: Paradise through Victory
+            
+            # Chapter 1: Tutorial through Weynon Priory
+            mq_chapter_1 = [
+                "Deliver the Amulet",
+                "Find the Heir",
+                "Breaking the Siege of Kvatch: Gate Closed",
+                "Breaking the Siege of Kvatch",
+                "Weynon Priory",
+                "Battle for Castle Kvatch",
+            ]
+            
+            # Chapter 2: MQ05 through MQ13 (pre-Paradise)
+            mq_chapter_2 = [
+                # MQ05 - The Path of Dawn
+                "The Path of Dawn: Acquire Commentaries Vol I",
+                "The Path of Dawn: Acquire Commentaries Vol II",
+                "The Path of Dawn: Acquire Commentaries Vol III",
+                "The Path of Dawn: Acquire Commentaries Vol IV",
+                "The Path of Dawn",
+                # MQ06 - Dagon Shrine
+                "Dagon Shrine: Mysterium Xarxes Acquired",
+                "Dagon Shrine: Kill Harrow",
+                "Dagon Shrine",
+                "Attack on Fort Sutch",
+                # MQ07 - Spies
+                "Spies: Kill Saveri Faram",
+                "Spies: Kill Jearl",
+                "Spies",
+                # MQ08-MQ13 - Blood/artifact quests and Bruma defense
+                "Blood of the Daedra",
+                "Blood of the Divines",
+                "Blood of the Divines: Free Spirit 1",
+                "Blood of the Divines: Free Spirit 2",
+                "Blood of the Divines: Free Spirit 3",
+                "Blood of the Divines: Free Spirit 4",
+                "Blood of the Divines: Armor of Tiber Septim",
+                "Bruma Gate",
+                "Miscarcand",
+                "Miscarcand: Great Welkynd Stone",
+                "Defense of Bruma",
+                "Great Gate",
+            ]
+            
+            # Chapter 3: Paradise through Victory
+            mq_chapter_3 = [
+                "Paradise: Bands of the Chosen Acquired",
+                "Paradise: Bands of the Chosen Removed",
+                "Paradise",
+            ]
+
+            for loc_name in mq_chapter_1 + mq_chapter_2 + mq_chapter_3:
+                if loc_name in location_table:
+                    loc_data = location_table[loc_name]
+                    loc_obj = OblivionLocation(self.player, loc_name, loc_data.id, cyrodiil_region)
+                    cyrodiil_region.locations.append(loc_obj)
+
+            if "Light the Dragonfires" in location_table:
+                loc_data = location_table["Light the Dragonfires"]
+                mq_victory_loc = OblivionLocation(self.player, "Light the Dragonfires", loc_data.id, cyrodiil_region)
+                cyrodiil_region.locations.append(mq_victory_loc)
+            # Add chapter event locations
+            for chapter_event in ["Weynon Priory Quest Complete", "Paradise Complete"]:
+                if chapter_event in location_table:
+                    ev_data = location_table[chapter_event]
+                    ev_loc = OblivionLocation(self.player, chapter_event, ev_data.id, cyrodiil_region)
+                    cyrodiil_region.locations.append(ev_loc)
     
     def set_rules(self) -> None:
         set_rules(self.multiworld, self.player)
     
     def create_items(self) -> None:
-        item_pool = []
-        
+        item_pool: list[Item] = []
+        goal: str = self.options.goal.current_key  # needed for MQ conditional items
+
         # Get items that are precollected (includes start_inventory)
         precollected_items = {item.name for item in self.multiworld.precollected_items[self.player]}
         
@@ -575,6 +724,57 @@ class OblivionWorld(World):
                 if access_item_name in item_table and access_item_name not in precollected_items:
                     item_pool.append(self.create_item(access_item_name))
 
+        # Main Quest: add Amulet of Kings only when Light the Dragonfires is the selected goal
+        if goal == "light_the_dragonfires" and "Amulet of Kings" in item_table:
+            if not any(i.name == "Amulet of Kings" for i in item_pool):  # avoid accidental duplication
+                item_pool.append(self.create_item("Amulet of Kings"))
+
+        # Main Quest: add Kvatch Gate Key only when Light the Dragonfires is the selected goal
+        if goal == "light_the_dragonfires" and "Kvatch Gate Key" in item_table:
+            if not any(i.name == "Kvatch Gate Key" for i in item_pool):
+                item_pool.append(self.create_item("Kvatch Gate Key"))
+
+        # MQ06: add Dagon Shrine Passphrase only when MQ goal is active
+        if goal == "light_the_dragonfires" and "Dagon Shrine Passphrase" in item_table:
+            if not any(i.name == "Dagon Shrine Passphrase" for i in item_pool):
+                item_pool.append(self.create_item("Dagon Shrine Passphrase"))
+
+        # Post-MQ06 optional: Fort Sutch Gate Key (Attack on Fort Sutch) only when MQ goal is active
+        if goal == "light_the_dragonfires" and "Fort Sutch Gate Key" in item_table:
+            if not any(i.name == "Fort Sutch Gate Key" for i in item_pool):
+                item_pool.append(self.create_item("Fort Sutch Gate Key"))
+
+        # MQ07: Blades' Report: Strangers at Dusk (gates Spies quest) only when MQ goal active
+        if goal == "light_the_dragonfires" and "Blades' Report: Strangers at Dusk" in item_table:
+            if not any(i.name == "Blades' Report: Strangers at Dusk" for i in item_pool):
+                item_pool.append(self.create_item("Blades' Report: Strangers at Dusk"))
+
+        # MQ05: Encrypted Scroll of the Blades (gates all MQ05 checks) only when MQ goal active
+        if goal == "light_the_dragonfires" and "Encrypted Scroll of the Blades" in item_table:
+            if not any(i.name == "Encrypted Scroll of the Blades" for i in item_pool):
+                item_pool.append(self.create_item("Encrypted Scroll of the Blades"))
+
+        # MQ08: Decoded Pages of the Xarxes (four fragments) only when MQ goal active
+        if goal == "light_the_dragonfires":
+            for name in [
+                "Decoded Page of the Xarxes: Daedric",
+                "Decoded Page of the Xarxes: Divine",
+                "Decoded Page of the Xarxes: Ayleid",
+                "Decoded Page of the Xarxes: Sigillum",
+            ]:
+                if name in item_table and not any(i.name == name for i in item_pool):
+                    item_pool.append(self.create_item(name))
+
+        # Bruma Gate Key only when MQ goal active
+        if goal == "light_the_dragonfires" and "Bruma Gate Key" in item_table:
+            if not any(i.name == "Bruma Gate Key" for i in item_pool):
+                item_pool.append(self.create_item("Bruma Gate Key"))
+
+        # Paradise Access only when MQ goal active
+        if goal == "light_the_dragonfires" and "Paradise Access" in item_table:
+            if not any(i.name == "Paradise Access" for i in item_pool):
+                item_pool.append(self.create_item("Paradise Access"))
+
         # Count enabled arena locations
         enabled_arena_count = self.arena_count if self.arena_enabled else 0
         
@@ -587,18 +787,37 @@ class OblivionWorld(World):
         # Count class skill locations
         enabled_class_skill_count = 0
         if self.selected_class is not None:
-            class_skills = get_class_skills(self.selected_class)
-            # Each level provides 2 skill increases per class skill (14 total per level)
+            class_skills = get_filtered_class_skills(self.selected_class, self.excluded_skills)
+            # Each level provides 2 skill increases per class skill (14 total per level if no skills excluded)
             enabled_class_skill_count = self.class_level_maximum * len(class_skills) * 2
         
         # Count dungeon locations (selected via region system)
         enabled_dungeon_count = self.dungeon_count if self.dungeons_enabled else 0
-        
-        # Count visit locations (Ayleid Well only; other stones disabled)
-        enabled_visit_count = 1
-        
-        # Count all fillable locations: visits + shrines + shops + arena + gates + class_skills + dungeons (exclude Victory)
-        total_locations = enabled_visit_count + enabled_shrine_count + enabled_shop_count + enabled_arena_count + enabled_gate_count + enabled_class_skill_count + enabled_dungeon_count
+
+        # Count visit locations (Ayleid Well always present + birthsign stones for selected regions or all if regions disabled)
+        if self.dungeons_enabled:
+            # Only include stones whose region is selected
+            selected_regions_set = set(self.selected_regions)
+            stone_count = sum(1 for _name, region in getattr(self, '_birthsign_stones', []) if region in selected_regions_set)
+        else:
+            # Regions disabled: include all stones
+            stone_count = len(getattr(self, '_birthsign_stones', []))
+        enabled_visit_count = 1 + stone_count
+
+        # Count MQ milestone locations when MQ goal active
+        # Composition:
+        #   Core chain: 12 (Deliver the Amulet through Dagon Shrine)
+        #   Late chain: 19 (Harrow, Spies trio, Daedra/Divines arcs, Bruma path, Paradise trio)
+        #   Optional extras: 2 (Battle for Castle Kvatch, Attack on Fort Sutch)
+        # Total (excluding final victory): 33
+        # Light the Dragonfires victory location is excluded from fill count.
+        mq_milestone_count = 33 if goal == "light_the_dragonfires" else 0
+
+        # Count all fillable locations: visits + shrines + shops + arena + gates + class_skills + dungeons + mq milestones (exclude Victory event)
+        total_locations = (
+            enabled_visit_count + enabled_shrine_count + enabled_shop_count + enabled_arena_count +
+            enabled_gate_count + enabled_class_skill_count + enabled_dungeon_count + mq_milestone_count
+        )
         
         # Filter useful items based on randomized vs vanilla shrines
         filtered_useful_items = list(useful_items)
@@ -668,7 +887,7 @@ class OblivionWorld(World):
             if gate_vision_item_name in item_table:
                 item_pool.append(self.create_item(gate_vision_item_name))
                 # Hint to the Generator that this item should be placed early
-                self.multiworld.local_early_items[self.player][gate_vision_item_name] = 1
+                self.multiworld.early_items[self.player][gate_vision_item_name] = 1
                 # Remove from useful items to prevent duplicate placement
                 if gate_vision_item_name in filtered_useful_items:
                     filtered_useful_items.remove(gate_vision_item_name)
@@ -681,6 +900,15 @@ class OblivionWorld(World):
                 # Remove from useful items to prevent duplicate placement
                 if fast_travel_item_name in filtered_useful_items:
                     filtered_useful_items.remove(fast_travel_item_name)
+        
+        # Add Horse item with early placement hint
+        horse_item_name = "Horse"
+        if horse_item_name in item_table:
+            item_pool.append(self.create_item(horse_item_name))
+            self.multiworld.early_items[self.player][horse_item_name] = 1
+            # Remove from useful items to prevent duplicate placement
+            if horse_item_name in filtered_useful_items:
+                filtered_useful_items.remove(horse_item_name)
         
         # Calculate filler needed after guaranteeing artifacts
         current_items = len(item_pool)
@@ -754,6 +982,7 @@ class OblivionWorld(World):
                     if state.can_reach_location(f"Arena Match {i} Victory", self.player)) >= 21
             )
         elif goal == "dungeon_delver":
+            
             dungeon_victory_location = self.multiworld.get_location("Dungeon Delver", self.player)
             victory_item = self.create_event("Victory")
             dungeon_victory_location.place_locked_item(victory_item)
@@ -762,8 +991,30 @@ class OblivionWorld(World):
             dungeon_victory_location.access_rule = lambda state, dungeons=required_dungeons: (
                 all(state.can_reach_location(d, self.player) for d in dungeons)
             )
+        elif goal == "light_the_dragonfires":
+            # Chapter marker events
+            chapter_event_items = {
+                # Location : Event Item
+                "Weynon Priory Quest Complete": "Cloud Ruler Temple Established",
+                "Paradise Complete": "Dragonfires Ready",
+            }
+            for chapter_loc, item_name in chapter_event_items.items():
+                try:
+                    loc_obj = self.multiworld.get_location(chapter_loc, self.player)
+                    loc_obj.place_locked_item(self.create_event(item_name))
+                except Exception:
+                    pass
+            # Place standard Victory event item on final MQ location
+            try:
+                ltd_loc = self.multiworld.get_location("Light the Dragonfires", self.player)
+                ltd_loc.place_locked_item(self.create_event("Victory"))
+            except Exception:
+                pass
+            # MQ completion condition: obtain Victory
+            self.multiworld.completion_condition[self.player] = lambda state: state.has("Victory", self.player)
+            return
         
-        # Set completion condition to check for Victory item
+        # Default completion condition for other goals: require Victory event item (placed above)
         self.multiworld.completion_condition[self.player] = lambda state: state.has("Victory", self.player)
     
     def fill_slot_data(self) -> Dict[str, Any]:
@@ -788,8 +1039,9 @@ class OblivionWorld(World):
             # Class system data
             "selected_class": self.selected_class,
             "class_level_maximum": self.class_level_maximum,
-            "class_skills": get_class_skills(self.selected_class) if self.selected_class else [],
+            "class_skills": get_filtered_class_skills(self.selected_class, self.excluded_skills) if self.selected_class else [],
             "progressive_class_level_item_name": self.progressive_class_level_item_name,
+            "excluded_skills": list(self.excluded_skills) if self.selected_class else [],
             
             # Count settings
             "arena_matches": self.arena_count,
@@ -797,12 +1049,14 @@ class OblivionWorld(World):
             "gate_count": self.gate_count,
             "gate_vision": self.gate_vision_setting if self.gate_count > 0 else "off",
             "fast_travel_item": self.fast_travel_item_enabled,
+            "fast_arena": self.options.fast_arena.value,
             "dungeon_marker_mode": self.dungeon_marker_mode_setting,
             "selected_dungeons": getattr(self, 'selected_dungeons', []),
             "selected_regions": getattr(self, 'selected_regions', []),
             "dungeons_by_region": getattr(self, 'selected_dungeons_by_region', {}),
             # Compatibility hint for generic trackers
             "starting_unlocked_regions": getattr(self, 'starting_unlocked_regions', []),
+            "shop_scout_type": self.options.shop_scout_type.value,
             
         }
     

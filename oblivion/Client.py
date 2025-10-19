@@ -17,7 +17,115 @@ class OblivionTracker:
         self.locations = set()
         self.items = {item_name: 0 for item_name in Items.item_table.keys()}
         self.slot_data = ctx.slot_data if hasattr(ctx, 'slot_data') else {}
+        # Doomstone regions imported from Locations for central definition
+        self.stone_regions = Locations.DOOMSTONE_REGIONS
+
+        # Shop scouting caches
+        self.shop_cache = {}  # location_id -> {"item_id": int, "item_name": str, "player": int (finding), "receiving_player": int, "flags": int}
+        self._shop_scout_task = None
+        self._shop_tier_unlocked = set()  # tiers already hinted
+        if not hasattr(ctx, 'hinted_location_ids'):
+            ctx.hinted_location_ids = []
+        self.hinted_shop_location_ids = set()
+        # Predefine shop value groups (tiers)
+        self.shop_tiers = [
+            [1, 10, 100],
+            [2, 20, 200],
+            [3, 30, 300],
+            [4, 40, 400],
+            [5, 50, 500],
+        ]
+        # Precompute set of shop location ids
+        self.shop_ids = set()
+        for tier in self.shop_tiers:
+            for value in tier:
+                loc_id = Locations.location_table.get(f"Shop Item Value {value}")
+                if loc_id:
+                    try:
+                        self.shop_ids.add(loc_id.id)
+                    except Exception:
+                        pass
         self.refresh_items()
+        # Initialization retry state for shop tab
+        self._shop_init_attempts = 0
+        self._shop_init_done = False
+
+    def ensure_shop_initialized(self):
+        """Populate shop_cache from stored hints (once they load) with retry backoff."""
+        if self._shop_init_done:
+            return
+        hints_key = f"_read_hints_{getattr(self.ctx, 'team', 0)}_{getattr(self.ctx, 'slot', 0)}"
+        hints = getattr(self.ctx, 'stored_data', {}).get(hints_key, [])
+        loaded_any = False
+        for hint in hints:
+            loc_id = hint.get("location")
+            if not isinstance(loc_id, int) or loc_id not in self.shop_ids:
+                continue
+            item_id = hint.get("item")
+            if not isinstance(item_id, int):
+                continue
+            try:
+                item_name = self.ctx.item_names.lookup_in_slot(item_id, hint.get("receiving_player"))
+            except Exception:
+                item_name = f"Item {item_id}"
+            self.shop_cache[loc_id] = {
+                "item_id": item_id,
+                "item_name": item_name,
+                "player": hint.get("finding_player"),
+                "receiving_player": hint.get("receiving_player"),
+                "flags": hint.get("item_flags", 0)
+            }
+            loaded_any = True
+        if loaded_any:
+            self._shop_init_done = True
+            try:
+                self.update_shop_tab()
+            except Exception:  # pragma: no cover
+                pass
+            return
+        backoff = [0.25, 0.5, 1, 1.5, 2, 3, 4]
+        if self._shop_init_attempts < len(backoff):
+            delay = backoff[self._shop_init_attempts]
+            self._shop_init_attempts += 1
+            import asyncio as _a
+            _a.get_event_loop().call_later(delay, self.ensure_shop_initialized)
+
+        #needed for updating shop tab when Progressive Shop Stock is obtained
+    def refresh_shop_from_stored_hints(self):
+        """Re-scan stored hints for new shop entries."""
+        hints_key = f"_read_hints_{getattr(self.ctx, 'team', 0)}_{getattr(self.ctx, 'slot', 0)}"
+        hints = getattr(self.ctx, 'stored_data', {}).get(hints_key, [])
+        added = 0
+        for hint in hints:
+            loc_id = hint.get('location')
+            if not isinstance(loc_id, int) or loc_id not in self.shop_ids or loc_id in self.shop_cache:
+                continue
+            item_id = hint.get('item')
+            flags = hint.get('item_flags', 0) or hint.get('flags', 0)
+            receiving_player = hint.get('receiving_player')
+            finding_player = hint.get('finding_player')
+            try:
+                item_name = self.ctx.item_names.lookup_in_slot(item_id, receiving_player)
+            except Exception:
+                item_name = f"Item {item_id}"
+            self.shop_cache[loc_id] = {
+                'item_id': item_id,
+                'item_name': item_name,
+                'player': finding_player,
+                'receiving_player': receiving_player,
+                'flags': flags
+            }
+            added += 1
+    
+    def is_location_checked(self, location_name):
+        """Check if a specific location has been checked (completed) by the player."""
+        if location_name not in Locations.location_table:
+            return False
+        location_data = Locations.location_table.get(location_name)
+        if not location_data or location_data.id is None:
+            return False
+        checked_locations = getattr(self.ctx, 'checked_locations', set())
+        return location_data.id in checked_locations
     
     def check_location_accessibility(self, location_name):
         """Check if a location is accessible based on the game rules."""
@@ -64,6 +172,146 @@ class OblivionTracker:
                 return self.has("Progressive Shop Stock", 1, 3)
             elif value in [5, 50, 500]:  # Set 5
                 return self.has("Progressive Shop Stock", 1, 4)
+
+        # Main Quest milestone rules
+        if location_name == "Deliver the Amulet":
+            return self.has("Amulet of Kings", 1)
+        if location_name == "Breaking the Siege of Kvatch: Gate Closed":
+            return self.has("Kvatch Gate Key", 1)
+        if location_name == "Breaking the Siege of Kvatch":
+            # Requires that the Gate Closed be logically reachable
+            return self.check_location_accessibility("Breaking the Siege of Kvatch: Gate Closed")
+        if location_name == "Find the Heir":
+            # Requires Deliver the Amulet completed first, plus Amulet + Key and Siege logically reachable
+            return (
+                self.check_location_accessibility("Deliver the Amulet")
+                and self.has("Amulet of Kings", 1)
+                and self.has("Kvatch Gate Key", 1)
+                and self.check_location_accessibility("Breaking the Siege of Kvatch")
+            )
+        if location_name == "Weynon Priory":
+            return self.check_location_accessibility("Find the Heir")
+        if location_name == "Battle for Castle Kvatch":
+            # Requires Siege in logic
+            if not self.check_location_accessibility("Breaking the Siege of Kvatch"):
+                return False
+            prev_data = Locations.location_table.get("Breaking the Siege of Kvatch")
+            if prev_data and hasattr(self.ctx, 'checked_locations'):
+                prev_id = getattr(prev_data, "id", None)
+                if isinstance(prev_id, int):
+                    if prev_id not in getattr(self.ctx, 'checked_locations', set()):
+                        return False
+            return True
+        # MQ05 - All five locations require the Encrypted Scroll of the Blades
+        if location_name in {
+            "The Path of Dawn: Acquire Commentaries Vol I",
+            "The Path of Dawn: Acquire Commentaries Vol II",
+            "The Path of Dawn: Acquire Commentaries Vol III",
+            "The Path of Dawn: Acquire Commentaries Vol IV",
+            "The Path of Dawn",
+        }:
+            return self.has("Encrypted Scroll of the Blades", 1)
+        # MQ06 - MX and Kill Harrow require Passphrase only; Dagon Shrine completion requires turning in MX to Martin at CRT
+        if location_name == "Dagon Shrine: Mysterium Xarxes Acquired":
+            return self.has("Dagon Shrine Passphrase", 1)
+        if location_name == "Dagon Shrine: Kill Harrow":
+            return self.has("Dagon Shrine Passphrase", 1)
+        if location_name == "Dagon Shrine":
+            if not self.is_location_checked("Weynon Priory"):
+                return False
+            return (
+                self.check_location_accessibility("Dagon Shrine: Mysterium Xarxes Acquired")
+                and self.check_location_accessibility("Weynon Priory")
+            )
+        # Attack on Fort Sutch spawns after Dagon Shrine quest is fully complete
+        if location_name == "Attack on Fort Sutch":
+            if not self.is_location_checked("Weynon Priory"):
+                return False
+            return (
+                self.check_location_accessibility("Dagon Shrine")
+                and self.has("Fort Sutch Gate Key", 1)
+            )
+    # MQ07 Spies: All three locations gated by Blades' Report item + Weynon Priory reachable
+        if location_name in {
+            "Spies: Kill Saveri Faram",
+            "Spies: Kill Jearl",
+            "Spies",
+        }:
+            if not self.is_location_checked("Weynon Priory"):
+                return False
+            return (
+                self.has("Blades' Report: Strangers at Dusk", 1)
+                and self.check_location_accessibility("Weynon Priory")
+            )
+        if location_name == "Blood of the Daedra":
+            if not self.is_location_checked("Weynon Priory"):
+                return False
+            return (
+                self.has("Decoded Page of the Xarxes: Daedric", 1)
+                and self.check_location_accessibility("Weynon Priory")
+            )
+        if location_name == "Blood of the Divines":
+            if not self.is_location_checked("Weynon Priory"):
+                return False
+            return (
+                self.has("Decoded Page of the Xarxes: Divine", 1)
+                and self.check_location_accessibility("Weynon Priory")
+            )
+        if location_name in {
+            "Blood of the Divines: Free Spirit 1",
+            "Blood of the Divines: Free Spirit 2",
+            "Blood of the Divines: Free Spirit 3",
+            "Blood of the Divines: Free Spirit 4",
+            "Blood of the Divines: Armor of Tiber Septim",
+        }:
+            if not self.is_location_checked("Weynon Priory"):
+                return False
+            return (
+                self.has("Decoded Page of the Xarxes: Divine", 1)
+                and self.check_location_accessibility("Weynon Priory")
+            )
+        if location_name == "Bruma Gate":
+            return self.has("Bruma Gate Key", 1)
+        if location_name in {"Miscarcand: Great Welkynd Stone", "Miscarcand"}:
+            if not self.is_location_checked("Weynon Priory"):
+                return False
+            return (
+                self.has("Decoded Page of the Xarxes: Ayleid", 1)
+                and self.check_location_accessibility("Weynon Priory")
+            )
+        if location_name in {"Defense of Bruma", "Great Gate"}:
+            if not self.is_location_checked("Weynon Priory"):
+                return False
+            return (
+                self.has("Decoded Page of the Xarxes: Sigillum", 1)
+                and self.check_location_accessibility("Weynon Priory")
+            )
+        # Paradise requires all 4 pages + Dagon Shrine (Signifying Mysterium Xarxes turned in at Cloud Ruler Temple)
+        # PLUS: Gate behind Dagon Shrine being CHECKED (Chapter 3 requires Chapter 2 completion)
+        if location_name in {
+            "Paradise: Bands of the Chosen Acquired",
+            "Paradise: Bands of the Chosen Removed",
+            "Paradise",
+        }:
+            if not self.is_location_checked("Dagon Shrine"):
+                return False
+            return (
+                self.has("Paradise Access", 1)
+                and self.has("Decoded Page of the Xarxes: Daedric", 1)
+                and self.has("Decoded Page of the Xarxes: Divine", 1)
+                and self.has("Decoded Page of the Xarxes: Ayleid", 1)
+                and self.has("Decoded Page of the Xarxes: Sigillum", 1)
+                and self.check_location_accessibility("Dagon Shrine")
+            )
+        if location_name == "Weynon Priory Quest Complete":
+            return self.check_location_accessibility("Weynon Priory")
+        if location_name == "Paradise Complete":
+            return self.check_location_accessibility("Paradise")
+        if location_name == "Light the Dragonfires":
+            # Final victory event requires Paradise accessible
+            return (
+                self.check_location_accessibility("Paradise")
+            )
         
         # Check class skill rules
         if " Skill Increase " in location_name:
@@ -117,6 +365,23 @@ class OblivionTracker:
                 return False
             access_item_name = f"{region_name} Access"
             return self.has(access_item_name, 1)
+
+        # Birthsign Doomstone access: require region Access when region system active
+        if location_name in self.stone_regions:
+            # If region system disabled (no selected_regions) treat as always accessible
+            selected_regions = self.ctx.slot_data.get("selected_regions", []) or []
+            if not selected_regions:
+                return True
+            region_name = self.stone_regions[location_name]
+            if region_name not in selected_regions:
+                # Stone not part of this seed
+                return False
+            access_item_name = f"{region_name} Access"
+            # If region starts unlocked (present in starting_unlocked_regions) allow without item
+            starting_unlocked = set(self.ctx.slot_data.get("starting_unlocked_regions", []) or [])
+            if region_name in starting_unlocked:
+                return True
+            return self.has(access_item_name, 1)
                 
         return True
     
@@ -135,38 +400,319 @@ class OblivionTracker:
                 location_name = self.ctx.location_names.lookup_in_game(location_id, self.ctx.game)
                 if self.check_location_accessibility(location_name):
                     accessible_locations.append({"text": location_name})
+            
+            # Add goal location to MQ section
+            slot_goal_data = getattr(self.ctx, 'slot_data', {}) or {}
+            goal_key = slot_goal_data.get("goal") if isinstance(slot_goal_data, dict) else None
+            if goal_key == "light_the_dragonfires" and self.check_location_accessibility("Light the Dragonfires"):
+                accessible_locations.append({"text": "[Goal] Light the Dragonfires"})
 
             def natural_sort_key(location_dict):
                 text = location_dict["text"]
+                
+                # Main Quest story order mapping
+                mq_order = {
+                    "Deliver the Amulet": (1,1), "Breaking the Siege of Kvatch: Gate Closed": (1,2), "Breaking the Siege of Kvatch": (1,3),
+                    "Battle for Castle Kvatch": (1,4), "Find the Heir": (1,5), "Weynon Priory": (1,6),
+                    "The Path of Dawn: Acquire Commentaries Vol I": (2,1), "The Path of Dawn: Acquire Commentaries Vol II": (2,2),
+                    "The Path of Dawn: Acquire Commentaries Vol III": (2,3), "The Path of Dawn: Acquire Commentaries Vol IV": (2,4), "The Path of Dawn": (2,5),
+                    "Dagon Shrine: Mysterium Xarxes Acquired": (2,6), "Dagon Shrine: Kill Harrow": (2,7), "Dagon Shrine": (2,8), "Attack on Fort Sutch": (2,9),
+                    "Spies: Kill Saveri Faram": (2,10), "Spies: Kill Jearl": (2,11), "Spies": (2,12), "Blood of the Daedra": (2,13),
+                    "Blood of the Divines: Free Spirit 1": (2,14), "Blood of the Divines: Free Spirit 2": (2,15), "Blood of the Divines: Free Spirit 3": (2,16),
+                    "Blood of the Divines: Free Spirit 4": (2,17), "Blood of the Divines: Armor of Tiber Septim": (2,18), "Blood of the Divines": (2,19),
+                    "Bruma Gate": (2,20), "Miscarcand: Great Welkynd Stone": (2,21), "Miscarcand": (2,22), "Defense of Bruma": (2,23), "Great Gate": (2,24),
+                    "Paradise: Bands of the Chosen Acquired": (3,1), "Paradise: Bands of the Chosen Removed": (3,2), "Paradise": (3,3),
+                    "[Goal] Light the Dragonfires": (3,4),
+                }.get(text)
+                
+                # Category 0: Class Skills
                 if " Skill Increase " in text:
-                    # Class skill locations: "Skill Skill Increase X"
                     parts = text.split(" Skill Increase ")
                     skill_name = parts[0]
                     skill_increase_num = int(parts[1])
                     return (0, skill_name, skill_increase_num)
+                
+                # Category 1: Dungeons and Birthsign Stones by region
                 elif text in Locations.DUNGEON_REGIONS:
-                    # Group dungeons by their region, then alpha by dungeon name
                     region = Locations.DUNGEON_REGIONS.get(text, "")
                     return (1, region, text)
+                elif text in self.stone_regions:
+                    region = self.stone_regions.get(text, "")
+                    return (1, region, f"~{text}")
+    
+                # Category 2: Arena matches
                 elif "Arena Match" in text:
                     num = int(text.split()[-2])
                     return (2, num)
-                elif "Gate" in text and "Closed" in text:
-                    num = int(text.split()[1])
-                    return (3, num)
+                
+                # Category 3: Main Quest (in story progression order)
+                elif mq_order:
+                    return (3, mq_order)
+                
+                # Category 4: Oblivion Gates (numeric) - but exclude MQ gates
+                elif "Gate" in text and "Closed" in text and text not in mq_order:
+                    parts = text.split()
+                    if len(parts) >= 3 and parts[0] == "Gate" and parts[1].isdigit() and parts[-1] == "Closed":
+                        num = int(parts[1])
+                        return (4, num)
+                    else:
+                        return (4, 9999, text)
+                
+                # Category 5: Shop Items
                 elif "Shop Item Value" in text:
                     num = int(text.split()[-1])
-                    return (4, num)
+                    return (5, num)
+                
+                # Category 6: Everything else (Visit an Ayleid Well, etc.)
                 else:
-                    return (5, text)
-
+                    return (6, text)
+            
             sorted_locations = sorted(accessible_locations, key=natural_sort_key)
             # Append (Region) to dungeon names in tracker for clarity
             for entry in sorted_locations:
                 name = entry["text"]
                 if name in Locations.DUNGEON_REGIONS:
                     entry["text"] = f"{name} ({Locations.DUNGEON_REGIONS[name]})"
-            self.ctx.tab_locations.content.data = sorted_locations
+                elif name in self.stone_regions:
+                    entry["text"] = f"{name} ({self.stone_regions[name]})"
+
+            if sorted_locations:
+                self.ctx.tab_locations.content.data = sorted_locations
+            else:
+                self.ctx.tab_locations.content.data = [{"text": "All currently available locations have been checked."}]
+
+    # ===== SHOP SCOUT / TAB LOGIC =====
+    def _shop_get_location_id(self, value: int):
+        loc_name = f"Shop Item Value {value}"
+        data = Locations.location_table.get(loc_name)
+        if data:
+            return data.id
+        return None
+
+    def schedule_shop_scout(self):
+        """Determine newly in-logic shop locations and send create_as_hint scouts."""
+        if not hasattr(self.ctx, 'location_names'):
+            return
+        # Get shop scout type setting (0=off, 1=summary, 2=player_only, 3=full_info)
+        shop_scout_type = getattr(self.ctx, 'slot_data', {}).get('shop_scout_type', 1)
+        
+        # Only Full Info mode (3) actually creates hints visible to all players
+        # Other modes just scout for display purposes
+        create_as_hint = 2 if shop_scout_type == 3 else 0
+        
+        # If off, don't scout at all
+        if shop_scout_type == 0:
+            return
+            
+        to_scout_ids = []
+        for tier_index, tier in enumerate(self.shop_tiers, start=1):
+            accessible_values = [v for v in tier if self.check_location_accessibility(f"Shop Item Value {v}")]
+            tier_in_logic = bool(accessible_values) if tier_index == 1 else len(accessible_values) == len(tier)
+            if not tier_in_logic or tier_index in self._shop_tier_unlocked:
+                continue
+            for value in accessible_values:
+                loc_id = self._shop_get_location_id(value)
+                if not loc_id:
+                    continue
+                if loc_id not in self.hinted_shop_location_ids:
+                    if not hasattr(self.ctx, 'missing_locations') or loc_id in getattr(self.ctx, 'missing_locations', set()):
+                        to_scout_ids.append(loc_id)
+            if to_scout_ids:
+                self._shop_tier_unlocked.add(tier_index)
+        if not to_scout_ids:
+            return
+        from Utils import async_start
+        async_start(self.ctx.send_msgs([{ "cmd": "LocationScouts", "locations": to_scout_ids, "create_as_hint": create_as_hint }]))
+        for loc_id in to_scout_ids:
+            self.hinted_shop_location_ids.add(loc_id)
+            if create_as_hint == 2:  # Only add to hinted_location_ids if actually creating hints
+                if hasattr(self.ctx, 'hinted_location_ids') and loc_id not in self.ctx.hinted_location_ids:
+                    self.ctx.hinted_location_ids.append(loc_id)
+        self.update_shop_tab()
+
+    def update_shop_tab(self):
+        if not hasattr(self.ctx, 'tab_shop'):
+            return
+        
+        # Get shop scout type setting (0=off, 1=summary, 2=player_only, 3=full_info)
+        slot_data = getattr(self.ctx, 'slot_data', {})
+        shop_scout_type = slot_data.get('shop_scout_type', 1)
+        
+        # If off, show placeholder
+        if shop_scout_type == 0:
+            self.ctx.tab_shop.content.data = [{"text": "Shop scouting disabled in settings."}]
+            return
+            
+        if not self.shop_cache:
+            self.ensure_shop_initialized()
+        
+        # Get checked locations to filter out purchased items
+        checked_locations = getattr(self.ctx, 'checked_locations', set())
+        
+        rows_map: list[tuple] = []
+        for tier in self.shop_tiers:
+            for value in tier:
+                loc_id = self._shop_get_location_id(value)
+                if not loc_id:
+                    continue
+                # Skip checked/purchased items
+                if loc_id in checked_locations:
+                    continue
+                entry = self.shop_cache.get(loc_id)
+                if not entry:
+                    continue
+                rows_map.append((value,
+                                 entry.get('item_id'),
+                                 entry.get('item_name'),
+                                 entry.get('player'),
+                                 entry.get('flags', 0),
+                                 entry.get('receiving_player')))
+        
+        # Sort by tier groups: (1,10,100), (2,20,200), etc.
+        def get_sort_key(row):
+            value = row[0]
+            # Determine tier (1-5) based on value
+            if value in [1, 10, 100]:
+                tier = 1
+            elif value in [2, 20, 200]:
+                tier = 2
+            elif value in [3, 30, 300]:
+                tier = 3
+            elif value in [4, 40, 400]:
+                tier = 4
+            elif value in [5, 50, 500]:
+                tier = 5
+            else:
+                tier = 999  # fallback
+            # Within tier, sort by value
+            return (tier, value)
+        
+        rows_map.sort(key=get_sort_key)
+        
+        out_rows = []
+        parser = getattr(getattr(self.ctx, 'ui', None), 'json_to_kivy_parser', None)
+        
+        # Build rows based on mode
+        if shop_scout_type == 2:  # Player Only mode - show only value and player
+            # Precompute widths
+            value_strs = [f"Value {v}:" for v, *_ in rows_map]
+            value_col_width = max((len(s) for s in value_strs), default=0)
+            
+            for (v, item_id, name, player_id, flags, receiving_player) in rows_map:
+                # Get receiving player name
+                if isinstance(receiving_player, int):
+                    try:
+                        recv_pname = self.ctx.player_names[receiving_player]
+                    except Exception:
+                        recv_pname = f"P{receiving_player}"
+                else:
+                    recv_pname = ""
+                
+                value_part = f"Value {v}:".ljust(value_col_width)
+                if recv_pname:
+                    player_markup = f"[color=EE00EE][{recv_pname}][/color]"
+                    line = f"{value_part}  {player_markup}"
+                else:
+                    line = value_part
+                out_rows.append({"text": line})
+                
+        else:  # Summary (1) or Full Info (3) modes - show value, item info, and player
+            # Precompute widths for alignment
+            value_strs = [f"Value {v}:" for v, *_ in rows_map]
+            value_col_width = max((len(s) for s in value_strs), default=0)
+            
+            # Collect plain item/player names for width calcs
+            item_plain_list = []
+            player_plain_list = []
+            item_markups = []
+            
+            for (v, item_id, name, player_id, flags, receiving_player) in rows_map:
+                # Get receiving player name
+                if isinstance(receiving_player, int):
+                    try:
+                        recv_pname = self.ctx.player_names[receiving_player]
+                    except Exception:
+                        recv_pname = f"P{receiving_player}"
+                else:
+                    recv_pname = ""
+                
+                # Determine item classification from flags
+                # flags & 0b001 = progression, flags & 0b010 = useful, flags & 0b100 = trap
+                is_progression = bool(flags & 0b001)
+                is_useful = bool(flags & 0b010)
+                is_trap = bool(flags & 0b100)
+                
+                if shop_scout_type == 1:  # Summary mode
+                    # Show classification instead of item name, disguise traps as filler
+                    if is_trap:
+                        item_classification = "Filler"
+                        color_code = '6375D6'  # Blue for filler
+                    elif is_progression:
+                        item_classification = "Progression"
+                        color_code = 'BB99FF'  # Purple/plum for progression
+                    elif is_useful:
+                        item_classification = "Useful"
+                        color_code = '00EEEE'  # Cyan for useful
+                    else:
+                        item_classification = "Filler"
+                        color_code = '6375D6'  # Blue for filler
+                    
+                    name_plain = item_classification
+                    name_markup = f"[color={color_code}]{item_classification}[/color]" if color_code else item_classification
+                else:  # Full Info mode (3)
+                    # Show full item name with colors
+                    name_plain = name
+                    if parser and isinstance(item_id, int):
+                        try:
+                            name_markup = parser.handle_node({"type": "item_id", "text": item_id, "flags": flags, "player": receiving_player})
+                        except Exception:
+                            name_markup = name
+                    else:
+                        color_code = None
+                        if flags & 0b001:  # Progression
+                            color_code = 'BB99FF'  # Purple/plum for progression
+                        elif flags & 0b100:  # Trap
+                            color_code = 'EE0000'  # Red for trap
+                        elif flags & 0b010:  # Useful
+                            color_code = '00EEEE'  # Cyan for useful
+                        else:  # Filler
+                            color_code = '6375D6'  # Blue for filler
+                        name_markup = f"[color={color_code}]{name}[/color]" if color_code else name
+                
+                player_plain_list.append(recv_pname)
+                item_plain_list.append(name_plain)
+                item_markups.append((v, name_plain, name_markup, recv_pname))
+            
+            item_col_width = max((len(n) for n in item_plain_list), default=0)
+            player_col_width = max((len(n) for n in player_plain_list), default=0)
+            
+            # Build formatted lines
+            for (v, name_plain, name_markup, pname) in item_markups:
+                value_part = f"Value {v}:".ljust(value_col_width)
+                # Compensate for invisible markup characters so columns align
+                item_padding = max(0, item_col_width - len(name_plain))
+                if pname:
+                    player_markup = f"[color=EE00EE][{pname}][/color]"
+                    # Right justify player inside its column width
+                    player_padding = max(0, player_col_width - len(pname))
+                    player_part = (" " * player_padding) + player_markup
+                else:
+                    player_part = ""
+                # Use separator columns for clearer grid feel
+                line = f"{value_part}  {name_markup}{' ' * item_padding}    {player_part}".rstrip()
+                out_rows.append({"text": line})
+        
+        if not out_rows:
+            out_rows.append({"text": "All shop items have been purchased!"})
+        
+        self.ctx.tab_shop.content.data = out_rows
+        # Force rebind to ensure UI refresh
+        try:
+            content = self.ctx.tab_shop.content
+            content.data = []
+            content.data = out_rows
+        except Exception:
+            pass
     
     def refresh_locations(self):
         """Refresh the locations based on current items."""
@@ -251,6 +797,8 @@ class OblivionClientCommandProcessor(ClientCommandProcessor):
                 self.output(f"- Close {gate_count} gates to win")
             elif goal == "arena":
                 self.output("- Complete 21 Arena matches and become Grand Champion to win")
+            elif goal == "light_the_dragonfires":
+                self.output("- Progress the Main Quest and light the Dragonfires to win")
             elif goal == "dungeon_delver":
                 regions_required = len(self.ctx.slot_data.get("selected_regions", []) or [])
                 self.output(f"- Clear all dungeons in {regions_required} selected region(s) to win")
@@ -386,6 +934,47 @@ class OblivionContext(CommonContext):
             "APShopTokenValue5CompletionToken": "Shop Item Value 5",
             "APShopTokenValue50CompletionToken": "Shop Item Value 50",
             "APShopTokenValue500CompletionToken": "Shop Item Value 500",
+            # Main Quest checks
+            "Deliver the Amulet": "Deliver the Amulet",
+            "Breaking the Siege of Kvatch: Gate Closed": "Breaking the Siege of Kvatch: Gate Closed",
+            "Breaking the Siege of Kvatch": "Breaking the Siege of Kvatch",
+            "Find the Heir": "Find the Heir",
+            "Weynon Priory": "Weynon Priory",
+            "Battle for Castle Kvatch": "Battle for Castle Kvatch",
+            # MQ05
+            "The Path of Dawn: Acquire Commentaries Vol I": "The Path of Dawn: Acquire Commentaries Vol I",
+            "The Path of Dawn: Acquire Commentaries Vol II": "The Path of Dawn: Acquire Commentaries Vol II",
+            "The Path of Dawn: Acquire Commentaries Vol III": "The Path of Dawn: Acquire Commentaries Vol III",
+            "The Path of Dawn: Acquire Commentaries Vol IV": "The Path of Dawn: Acquire Commentaries Vol IV",
+            "The Path of Dawn": "The Path of Dawn",
+            # MQ06
+            "Dagon Shrine: Mysterium Xarxes Acquired": "Dagon Shrine: Mysterium Xarxes Acquired",
+            "Dagon Shrine: Kill Harrow": "Dagon Shrine: Kill Harrow",
+            "Dagon Shrine": "Dagon Shrine",
+            # MQ07 Spies
+            "Spies: Kill Saveri Faram": "Spies: Kill Saveri Faram",
+            "Spies: Kill Jearl": "Spies: Kill Jearl",
+            "Spies": "Spies",
+            # MQ07+ and event/milestone completions
+            "Blood of the Daedra": "Blood of the Daedra",
+            "Blood of the Divines": "Blood of the Divines",
+            "Blood of the Divines: Free Spirit 1": "Blood of the Divines: Free Spirit 1",
+            "Blood of the Divines: Free Spirit 2": "Blood of the Divines: Free Spirit 2",
+            "Blood of the Divines: Free Spirit 3": "Blood of the Divines: Free Spirit 3",
+            "Blood of the Divines: Free Spirit 4": "Blood of the Divines: Free Spirit 4",
+            "Blood of the Divines: Armor of Tiber Septim": "Blood of the Divines: Armor of Tiber Septim",
+            "Bruma Gate": "Bruma Gate",
+            "Miscarcand": "Miscarcand",
+            "Miscarcand: Great Welkynd Stone": "Miscarcand: Great Welkynd Stone",
+            "Defense of Bruma": "Defense of Bruma",
+            "Great Gate": "Great Gate",
+            "Paradise": "Paradise",
+            "Paradise: Bands of the Chosen Acquired": "Paradise: Bands of the Chosen Acquired",
+            "Paradise: Bands of the Chosen Removed": "Paradise: Bands of the Chosen Removed",
+            "Attack on Fort Sutch": "Attack on Fort Sutch",
+            "Weynon Priory Quest Complete": "Weynon Priory Quest Complete",
+            "Paradise Complete": "Paradise Complete",
+            "Light the Dragonfires": "Light the Dragonfires",
         }
         
         # State tracking
@@ -478,13 +1067,47 @@ class OblivionContext(CommonContext):
             self.tracker = OblivionTracker(self)
             
             asyncio.create_task(self._setup_after_connection())
+            # Initial shop tier (tier 1) scout scheduling
+            if self.tracker:
+                self.tracker.schedule_shop_scout()
         elif cmd == "ReceivedItems":
             asyncio.create_task(self._send_items_to_oblivion())
             # Update tracker with new items
             if self.tracker:
                 self.tracker.refresh_items()
+                # Progressive Shop Stock will unlock a new tier
+                self.tracker.schedule_shop_scout()
+                # Update existing rows
+                self.tracker.update_shop_tab()
         elif cmd == "LocationInfo":
-            pass
+            # Handle scout responses for shop items (when not using create_as_hint)
+            if self.tracker and "locations" in args:
+                for location_info in args["locations"]:
+                    # NetworkItem objects use attributes, not dict keys
+                    loc_id = location_info.location
+                    if not isinstance(loc_id, int) or loc_id not in self.tracker.shop_ids:
+                        continue
+                    item_id = location_info.item
+                    if not isinstance(item_id, int):
+                        continue
+                    receiving_player = location_info.player
+                    flags = location_info.flags
+                    try:
+                        item_name = self.item_names.lookup_in_slot(item_id, receiving_player)
+                    except Exception:
+                        item_name = f"Item {item_id}"
+                    
+                    # Store in shop_cache
+                    self.tracker.shop_cache[loc_id] = {
+                        "item_id": item_id,
+                        "item_name": item_name,
+                        "player": self.slot,  # finding player is us
+                        "receiving_player": receiving_player,
+                        "flags": flags
+                    }
+                # Mark initialization as done and update display
+                self.tracker._shop_init_done = True
+                self.tracker.update_shop_tab()
         elif cmd == "RoomUpdate":
             if "checked_locations" in args:
                 # Sync checked_locations and missing_locations with server
@@ -495,15 +1118,53 @@ class OblivionContext(CommonContext):
                     self.checked_locations = set(new_checked)
                 if hasattr(self, 'missing_locations'):
                     self.missing_locations -= new_checked
-                if self.tracker:
-                    self.tracker.update_locations()
-        elif cmd == "LocationInfo":
-            pass
+            # Capture full missing_locations set when provided
+            if "missing_locations" in args:
+                # Server provides list of all location ids still missing
+                self.missing_locations = set(args["missing_locations"])
+                # Remove any we already have marked as checked (safety)
+                if hasattr(self, 'checked_locations'):
+                    self.missing_locations -= self.checked_locations
+            # After updating sets, refresh tracker state
+            if self.tracker:
+                self.tracker.update_locations()
+                self.tracker.update_shop_tab()
+                self.tracker.schedule_shop_scout()
             
     def on_print_json(self, args: dict):
         """Handle PrintJSON messages from server, including item transfers."""
         # Call parent method for normal handling
         super().on_print_json(args)
+        # Live hint integration for Shop tab
+        if not hasattr(self, 'tracker') or not self.tracker:
+            return
+        if args.get('type') == 'Hint':
+            # Re-scan stored hints and update UI
+            self.tracker.refresh_shop_from_stored_hints()
+            self.tracker.update_shop_tab()
+
+        # Live hint arrival: capture shop item hints immediately
+        if args.get("type") == "Hint":
+            try:
+                hint = args.get("hint", {})
+                loc_id = hint.get("location")
+                if isinstance(loc_id, int) and getattr(self, 'tracker', None) and loc_id in getattr(self.tracker, 'shop_ids', set()):
+                    item_id = hint.get("item")
+                    if isinstance(item_id, int):
+                        try:
+                            item_name = self.item_names.lookup_in_slot(item_id, hint.get("receiving_player"))
+                        except Exception:
+                            item_name = f"Item {item_id}"
+                        self.tracker.shop_cache[loc_id] = {"item_id": item_id,
+                                                           "item_name": item_name,
+                                                           "player": hint.get("finding_player"),
+                                                           "receiving_player": hint.get("receiving_player"),
+                                                           "flags": hint.get("item_flags", 0)}
+                        self.tracker._shop_init_done = True
+                        if hasattr(self, 'tab_shop'):
+                            self.tracker.update_shop_tab()
+            except Exception:
+                pass
         
         # Check if this is an item transfer message
         if args.get("type") == "ItemSend":
@@ -523,21 +1184,31 @@ class OblivionContext(CommonContext):
             if self_slot == source_player and self_slot != destination_player:
                 recipient_name = self.player_names[destination_player]
                 item_name = self.item_names.lookup_in_slot(item.item, destination_player)
-                self._write_transfer_log({
-                    "direction": "sent",
-                    "item": item_name,
-                    "other_player": recipient_name
-                })
+                location_name = None
+                try:
+                    if hasattr(item, 'location') and item.location is not None:
+                        location_name = self.location_names.lookup_in_slot(item.location, source_player)
+                except Exception:
+                    location_name = None
+                data = {"direction": "sent", "item": item_name, "other_player": recipient_name}
+                if location_name:
+                    data["location"] = location_name
+                self._write_transfer_log(data)
                 
             # We received an item from another player
             elif self_slot == destination_player and self_slot != source_player:
                 sender_name = self.player_names[source_player]
                 item_name = self.item_names.lookup_in_slot(item.item, self_slot)
-                self._write_transfer_log({
-                    "direction": "received", 
-                    "item": item_name,
-                    "other_player": sender_name
-                })
+                location_name = None
+                try:
+                    if hasattr(item, 'location') and item.location is not None:
+                        location_name = self.location_names.lookup_in_slot(item.location, source_player)
+                except Exception:
+                    location_name = None
+                data = {"direction": "received", "item": item_name, "other_player": sender_name}
+                if location_name:
+                    data["location"] = location_name
+                self._write_transfer_log(data)
             
             # We found our own item
             elif self_slot == source_player and self_slot == destination_player:
@@ -562,8 +1233,11 @@ class OblivionContext(CommonContext):
                     # Found items include location
                     f.write(f"{transfer_info['direction']}|{transfer_info['item']}|{transfer_info['location']}\n")
                 else:
-                    # Sent/received items include other player
-                    f.write(f"{transfer_info['direction']}|{transfer_info['item']}|{transfer_info['other_player']}\n")
+                    # Sent/received items
+                    if 'location' in transfer_info and transfer_info['location']:
+                        f.write(f"{transfer_info['direction']}|{transfer_info['item']}|{transfer_info['other_player']}|{transfer_info['location']}\n")
+                    else:
+                        f.write(f"{transfer_info['direction']}|{transfer_info['item']}|{transfer_info['other_player']}\n")
         except Exception as e:
             logger.error(f"Error writing transfer log: {e}")
             
@@ -779,6 +1453,7 @@ class OblivionContext(CommonContext):
                 gate_count = self.slot_data.get("gate_count", 0)
                 f.write(f"gate_count={gate_count}\n")
 
+
                 # Write dungeon marker mode (controls reveal vs fast travel)
                 dungeon_marker_mode = self.slot_data.get("dungeon_marker_mode", "reveal_and_fast_travel")
                 f.write(f"dungeon_marker_mode={dungeon_marker_mode}\n")
@@ -796,6 +1471,10 @@ class OblivionContext(CommonContext):
                 if arena_matches > 0:
                     f.write(f"enable_arena=True\n")
                 f.write(f"arena_matches={arena_matches}\n")
+                
+                # Write fast arena setting
+                fast_arena = self.slot_data.get("fast_arena", False)
+                f.write(f"fast_arena={'true' if bool(fast_arena) else 'false'}\n")
                 
                 # Write class system settings
                 selected_class = self.slot_data.get("selected_class")
@@ -1054,7 +1733,7 @@ class OblivionContext(CommonContext):
                                 break
                     
                     if next_skill_increase_num is None:
-                        logger.warning(f"No available skill increase location found for: {item}")
+                        # Skill may be excluded - skip silently
                         continue
                     
                     # Validate against progressive state bounds
@@ -1141,6 +1820,15 @@ class OblivionContext(CommonContext):
                 # Check if this is an Ayleid Well Visited completion
                 elif item == "Ayleid Well Visited":
                     location_name = "Visit an Ayleid Well"
+                    if location_name in name_to_id_map:
+                        location_id = name_to_id_map[location_name]
+                        if location_id in self.missing_locations and location_id not in new_locations:
+                            new_locations.append(location_id)
+
+                # Birthsign Doomstone visits
+                elif item.endswith(" Doomstone Visited"):
+                    stone_prefix = item[:-len(" Doomstone Visited")]
+                    location_name = f"Visit the {stone_prefix} Stone"
                     if location_name in name_to_id_map:
                         location_id = name_to_id_map[location_name]
                         if location_id in self.missing_locations and location_id not in new_locations:
@@ -1251,6 +1939,7 @@ class OblivionContext(CommonContext):
             pass
 
 
+
     def run_gui(self):
         """Launch the client with GUI."""
         from kvui import GameManager, UILog
@@ -1265,6 +1954,21 @@ class OblivionContext(CommonContext):
                 ret = super().build()
                 self.ctx.tab_items = self.add_client_tab("Items", UILog())
                 self.ctx.tab_locations = self.add_client_tab("Tracker", UILog())
+                self.ctx.tab_shop = self.add_client_tab("Shop", UILog())
+                # delayed initialization to ensure data populates
+                try:
+                    import asyncio as _a
+                    async def _after():
+                        for d in (0.2, 0.6, 1.2):
+                            await _a.sleep(d)
+                            tracker = getattr(self.ctx, 'tracker', None)
+                            if tracker:
+                                tracker.ensure_shop_initialized()
+                                tracker.update_shop_tab()
+                                tracker.schedule_shop_scout()
+                    _a.get_event_loop().create_task(_after())
+                except Exception:
+                    pass
                 return ret
         
         self.ui = OblivionManager(self)

@@ -161,6 +161,60 @@ for i in range(3):
     useful_items.append(progressive_armor_set_item_name)
 current_id += 1
 
+# Main Quest progression items (for Light the Dragonfires goal)
+amulet_of_kings_item_name = "Amulet of Kings"
+item_table[amulet_of_kings_item_name] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+
+# Kvatch Gate Key (second MQ progression step, only used when Light the Dragonfires goal active)
+kvatch_gate_key_item_name = "Kvatch Gate Key"
+item_table[kvatch_gate_key_item_name] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+
+# MQ06 - Dagon Shrine access item
+dagon_shrine_passphrase_item_name = "Dagon Shrine Passphrase"
+item_table[dagon_shrine_passphrase_item_name] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+
+# Fort Sutch Gate Key (post-MQ06 optional quest access; only when MQ goal active)
+fort_sutch_gate_key_item_name = "Fort Sutch Gate Key"
+item_table[fort_sutch_gate_key_item_name] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+
+# MQ07 - Spies gating item (unlocks Spies quest locations)
+blades_report_item_name = "Blades' Report: Strangers at Dusk"
+item_table[blades_report_item_name] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+
+# MQ05 gating item (unlocks MQ05 locations)
+encrypted_scroll_item_name = "Encrypted Scroll of the Blades"
+item_table[encrypted_scroll_item_name] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+
+# Decoded Xarxes pages 
+decoded_page_daedra_item_name = "Decoded Page of the Xarxes: Daedric"
+item_table[decoded_page_daedra_item_name] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+decoded_page_divines_item_name = "Decoded Page of the Xarxes: Divine"
+item_table[decoded_page_divines_item_name] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+decoded_page_ayleid_item_name = "Decoded Page of the Xarxes: Ayleid"
+item_table[decoded_page_ayleid_item_name] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+decoded_page_sigillum_item_name = "Decoded Page of the Xarxes: Sigillum"
+item_table[decoded_page_sigillum_item_name] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+
+# Bruma Gate Key (gates Bruma Gate milestone)
+bruma_gate_key_item_name = "Bruma Gate Key"
+item_table[bruma_gate_key_item_name] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+
+# Paradise Access (gates Paradise sequence)
+paradise_access_item_name = "Paradise Access"
+item_table[paradise_access_item_name] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+
 # Oblivion Gate Key (added dynamically based on gate_count)
 oblivion_gate_key_item_name = "Oblivion Gate Key"
 item_table[oblivion_gate_key_item_name] = ItemData(current_id, ItemClassification.progression)

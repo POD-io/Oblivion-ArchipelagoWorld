@@ -101,8 +101,8 @@ def set_rules(multiworld: MultiWorld, player: int) -> None:
     # ===== CLASS SKILL RULES =====
     # Class skill locations require Progressive Class Level items
     if world.selected_class is not None:
-        from .Classes import get_class_skills
-        class_skills = get_class_skills(world.selected_class)
+        from .Classes import get_filtered_class_skills
+        class_skills = get_filtered_class_skills(world.selected_class, world.excluded_skills)
         
         # Each Progressive Class Level provides 2 additional skill increases per class skill
         for level in range(1, world.class_level_maximum + 1):
@@ -133,3 +133,267 @@ def set_rules(multiworld: MultiWorld, player: int) -> None:
                 location.access_rule = lambda state: True
             else:
                 location.access_rule = lambda state, item_name=access_item: state.has(item_name, player)
+
+    # MAIN QUEST (Light the Dragonfires) milestone rules
+    if world.options.goal.current_key == "light_the_dragonfires":
+        try:
+            deliver_loc = multiworld.get_location("Deliver the Amulet", player)
+            deliver_loc.access_rule = lambda state: state.has("Amulet of Kings", player)
+        except Exception:
+            pass
+        try:
+            gate_closed_loc = multiworld.get_location("Breaking the Siege of Kvatch: Gate Closed", player)
+            gate_closed_loc.access_rule = lambda state: state.has("Kvatch Gate Key", player)
+        except Exception:
+            pass
+        try:
+            heir_loc = multiworld.get_location("Find the Heir", player)
+            # Requires Deliver the Amulet completed first, plus Amulet + Key and Siege logically reachable
+            heir_loc.access_rule = lambda state: (
+                state.can_reach_location("Deliver the Amulet", player)
+                and state.has("Amulet of Kings", player)
+                and state.has("Kvatch Gate Key", player)
+                and state.can_reach_location("Breaking the Siege of Kvatch", player)
+            )
+        except Exception:
+            pass
+        try:
+            siege_loc = multiworld.get_location("Breaking the Siege of Kvatch", player)
+            # Require that the Gate Closed stage be logically reachable (implies key access & gate closure path)
+            siege_loc.access_rule = lambda state: state.can_reach_location("Breaking the Siege of Kvatch: Gate Closed", player)
+        except Exception:
+            pass
+        try:
+            weynon_loc = multiworld.get_location("Weynon Priory", player)
+            # Weynon Priory requires completion of Find the Heir
+            weynon_loc.access_rule = lambda state: state.can_reach_location("Find the Heir", player)
+        except Exception:
+            pass
+        try:
+            ms49_loc = multiworld.get_location("Battle for Castle Kvatch", player)
+            # requires Siege first
+            ms49_loc.access_rule = lambda state: state.can_reach_location("Breaking the Siege of Kvatch", player)
+        except Exception:
+            pass
+
+    # MQ05 - The Path of Dawn: all checks require Encrypted Scroll of the Blades
+        try:
+            for name in [
+                "The Path of Dawn: Acquire Commentaries Vol I",
+                "The Path of Dawn: Acquire Commentaries Vol II",
+                "The Path of Dawn: Acquire Commentaries Vol III",
+                "The Path of Dawn: Acquire Commentaries Vol IV",
+                "The Path of Dawn",
+            ]:
+                try:
+                    loc = multiworld.get_location(name, player)
+                    loc.access_rule = lambda state: state.has("Encrypted Scroll of the Blades", player)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # MQ06 - Mysterium Xarxes and Dagon Shrine
+        try:
+            mx_loc = multiworld.get_location("Dagon Shrine: Mysterium Xarxes Acquired", player)
+            mx_loc.access_rule = lambda state: state.has("Dagon Shrine Passphrase", player)
+        except Exception:
+            pass
+        try:
+            dagon_loc = multiworld.get_location("Dagon Shrine", player)
+            # Requires MX acquired (reachable) and Martin at Cloud Ruler Temple (Weynon Priory reachable)
+            dagon_loc.access_rule = lambda state: (
+                state.can_reach_location("Dagon Shrine: Mysterium Xarxes Acquired", player)
+                and state.can_reach_location("Weynon Priory", player)
+            )
+        except Exception:
+            pass
+        try:
+            harrow_loc = multiworld.get_location("Dagon Shrine: Kill Harrow", player)
+            harrow_loc.access_rule = lambda state: state.has("Dagon Shrine Passphrase", player)
+        except Exception:
+            pass
+        # Optional: Attack on Fort Sutch (requires completing Dagon Shrine and possessing Fort Sutch Gate Key)
+        try:
+            sutch_loc = multiworld.get_location("Attack on Fort Sutch", player)
+            # Require Dagon Shrine to be reachable (completed) and the Fort Sutch Gate Key item
+            sutch_loc.access_rule = lambda state: (
+                state.can_reach_location("Dagon Shrine", player)
+                and state.has("Fort Sutch Gate Key", player)
+            )
+        except Exception:
+            pass
+
+        # MQ07 - Spies: gated by Blades' Report and Weynon Priory
+        try:
+            spies_prereq = lambda state: (
+                state.has("Blades' Report: Strangers at Dusk", player)
+                and state.can_reach_location("Weynon Priory", player)
+            )
+            for name in [
+                "Spies: Kill Saveri Faram",
+                "Spies: Kill Jearl",
+                "Spies",
+            ]:
+                try:
+                    loc = multiworld.get_location(name, player)
+                    loc.access_rule = spies_prereq
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # MQ08 - Blood of the Daedra: requires Decoded Page (Daedric) + Weynon Priory reachable
+        try:
+            bod_loc = multiworld.get_location("Blood of the Daedra", player)
+            bod_loc.access_rule = lambda state: (
+                state.has("Decoded Page of the Xarxes: Daedric", player)
+                and state.can_reach_location("Weynon Priory", player)
+            )
+        except Exception:
+            pass
+
+        # MQ09 - Blood of the Divines main + sub-steps: all require Decoded Page (Divine) + Weynon Priory
+        try:
+            div_page_rule = lambda state: (
+                state.has("Decoded Page of the Xarxes: Divine", player)
+                and state.can_reach_location("Weynon Priory", player)
+            )
+            for name in [
+                "Blood of the Divines: Free Spirit 1",
+                "Blood of the Divines: Free Spirit 2",
+                "Blood of the Divines: Free Spirit 3",
+                "Blood of the Divines: Free Spirit 4",
+                "Blood of the Divines: Armor of Tiber Septim",
+                "Blood of the Divines",
+            ]:
+                try:
+                    loc = multiworld.get_location(name, player)
+                    loc.access_rule = div_page_rule
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Bruma Gate - requires Bruma Gate Key item (independent MQ milestone)
+        try:
+            bruma_gate_loc = multiworld.get_location("Bruma Gate", player)
+            bruma_gate_loc.access_rule = lambda state: state.has("Bruma Gate Key", player)
+        except Exception:
+            pass
+
+        # Miscarcand + Great Welkynd Stone gated by Decoded Page: Ayleid + Weynon Priory
+        try:
+            ayleid_rule = lambda state: (
+                state.has("Decoded Page of the Xarxes: Ayleid", player)
+                and state.can_reach_location("Weynon Priory", player)
+            )
+            for name in [
+                "Miscarcand: Great Welkynd Stone",
+                "Miscarcand",
+            ]:
+                try:
+                    loc = multiworld.get_location(name, player)
+                    loc.access_rule = ayleid_rule
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Defense of Bruma and Great Gate gated by Decoded Page: Sigillum + Weynon Priory
+        try:
+            sig_rule = lambda state: (
+                state.has("Decoded Page of the Xarxes: Sigillum", player)
+                and state.can_reach_location("Weynon Priory", player)
+            )
+            for name in [
+                "Defense of Bruma",
+                "Great Gate",
+            ]:
+                try:
+                    loc = multiworld.get_location(name, player)
+                    loc.access_rule = sig_rule
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Paradise sequence gated by Paradise Access + all four pages + Weynon Priory
+        try:
+            paradise_rule = lambda state: (
+                state.has("Paradise Access", player)
+                and state.has("Decoded Page of the Xarxes: Daedric", player)
+                and state.has("Decoded Page of the Xarxes: Divine", player)
+                and state.has("Decoded Page of the Xarxes: Ayleid", player)
+                and state.has("Decoded Page of the Xarxes: Sigillum", player)
+                and state.can_reach_location("Dagon Shrine: Mysterium Xarxes Acquired", player)
+                and state.can_reach_location("Dagon Shrine", player)
+                and state.can_reach_location("Weynon Priory", player)
+                and state.has("Cloud Ruler Temple Established", player)  # chapter milestone event item
+            )
+            for name in [
+                "Paradise: Bands of the Chosen Acquired",
+                "Paradise: Bands of the Chosen Removed",
+                "Paradise",
+            ]:
+                try:
+                    loc = multiworld.get_location(name, player)
+                    loc.access_rule = paradise_rule
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Chapter event: Weynon Priory Quest Complete (establishes Cloud Ruler Temple)
+        try:
+            crt_loc = multiworld.get_location("Weynon Priory Quest Complete", player)
+            crt_loc.access_rule = lambda state: state.can_reach_location("Weynon Priory", player)
+        except Exception:
+            pass
+
+        # Chapter event: Paradise Complete (after reaching Paradise)
+        try:
+            paradise_complete_loc = multiworld.get_location("Paradise Complete", player)
+            paradise_complete_loc.access_rule = lambda state: state.can_reach_location("Paradise", player)
+        except Exception:
+            pass
+
+        # Final Victory: Light the Dragonfires (spoiler-log only event location)
+        # Requires Paradise Complete event (chapter milestone)
+        try:
+            victory_loc = multiworld.get_location("Light the Dragonfires", player)
+            victory_loc.access_rule = lambda state: (
+                state.has("Dragonfires Ready", player)  # chapter milestone event item
+                and state.can_reach_location("Weynon Priory", player)
+            )
+        except Exception:
+            pass
+
+    # BIRTHSIGN DOOMSTONE RULES - gated by their region access item
+    birthsign_stones = [
+        ("Visit the Tower Stone", "Heartlands"),
+        ("Visit the Steed Stone", "Heartlands"),
+        ("Visit the Warrior Stone", "West Weald"),
+        ("Visit the Apprentice Stone", "West Weald"),
+        ("Visit the Atronach Stone", "Colovian Highlands"),
+        ("Visit the Lord Stone", "Colovian Highlands"),
+        ("Visit the Lady Stone", "Gold Coast"),
+        ("Visit the Thief Stone", "Great Forest"),
+        ("Visit the Shadow Stone", "Nibenay Basin"),
+        ("Visit the Mage Stone", "Nibenay Basin"),
+        ("Visit the Lover Stone", "Nibenay Valley"),
+        ("Visit the Ritual Stone", "Blackwood"),
+        ("Visit the Serpent Stone", "Blackwood"),
+    ]
+    for stone_name, region_name in birthsign_stones:
+        try:
+            location = multiworld.get_location(stone_name, player)
+        except KeyError:
+            continue
+        access_item = f"{region_name} Access"
+        # If region starts unlocked, always accessible
+        if region_name in getattr(world, "starting_unlocked_regions", []):
+            location.access_rule = lambda state: True
+        else:
+            # Otherwise gated by region access item
+            location.access_rule = (lambda state, item_name=access_item: state.has(item_name, player))
