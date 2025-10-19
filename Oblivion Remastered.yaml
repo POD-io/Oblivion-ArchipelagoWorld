@@ -68,17 +68,20 @@ Oblivion Remastered:
     # Arena: Complete 21 Arena matches and become Grand Champion
     # Gatecloser: Close X Oblivion Gates (number set by Gate Count)
     # Shrine Seeker: Complete X Daedric Shrine quests (number set by Shrine Goal)
-    # Dungeon Delver: Complete all dungeons in this seed. (Regions * Dungeons per Region)
+    # Dungeon Delver: Complete all dungeons in your seed. (Regions * Dungeons per Region)
+    # Light the Dragonfires: Complete the Main Quest
     arena: 0
     gatecloser: 0
     shrine_seeker: 0
-    dungeon_delver: 50
+    dungeon_delver: 0
+    light_the_dragonfires: 50
 
   gate_count:
     # Number of Oblivion Gates available as location checks. Gates require Oblivion Gate Keys to access.
     # 
     # When Goal is Gatecloser: You must close this many gates for victory.
     # When Goal is NOT Gatecloser: This many gates are available as location checks.
+    # When Goal is Light the Dragonfires: This setting is ignored (set to 0 automatically).
     # 
     # Set to 0 to disable Gate content entirely (only allowed when Goal is not Gatecloser).
     #
@@ -229,6 +232,38 @@ Oblivion Remastered:
     'false': 50
     'true': 0
 
+  excluded_skills:
+    # Exclude specific skills from the class system.
+    # 
+    # Set a skill to 1 (or any non-zero #) to exclude it (it will not generate checks).
+    # 
+    # Only affects major skills for your selected class.
+    # Example: If you're an Acrobat and exclude Acrobatics and Sneak, 
+    # you'll only get checks for your remaining 5 major skills.
+    # 
+    # Ignored when Class Selection is Off.
+    Acrobatics: 0
+    Alchemy: 0
+    Alteration: 0
+    Armorer: 0
+    Athletics: 0
+    Blade: 0
+    Block: 0
+    Blunt: 0
+    Conjuration: 0
+    Destruction: 0
+    Hand-to-Hand: 0
+    Heavy Armor: 0
+    Illusion: 0
+    Light Armor: 0
+    Marksman: 0
+    Mercantile: 0
+    Mysticism: 0
+    Restoration: 0
+    Security: 0
+    Sneak: 0
+    Speechcraft: 0
+
   extra_gate_keys:
     # Additional Oblivion Gate Keys beyond the base amount needed.
     # 
@@ -273,6 +308,26 @@ Oblivion Remastered:
     # Reveal Only: All selected dungeon markers are shown as "rumors" (faded out), and must be ventured to normally.
     reveal_and_fast_travel: 50
     reveal_only: 0
+
+  shop_scout_type:
+    # How shop item scouting displays information.
+    # 
+    # Off: No shop scouting - shop tab will not display any information
+    # Summary: Shows the receiving player name and item classification (Progression/Useful/Filler) - default
+    # Player Only: Shows only the receiving player name for each shop item
+    # Full Info: Shows the complete item name and receiving player (creates !hint commands)
+    # 
+    # Note: Trap items are always disguised in Summary mode.
+    'off': 0
+    summary: 50
+    player_only: 0
+    full_info: 0
+
+  fast_arena:
+    # When true: Skip arena announcer dialogue before matches and fight immediately.
+    # When false: Must wait for announcer dialogue before match begins (default).
+    'false': 50
+    'true': 0
 
   ###########################
   # Item & Location Options #
