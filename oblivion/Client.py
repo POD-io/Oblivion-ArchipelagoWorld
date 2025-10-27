@@ -411,7 +411,7 @@ class OblivionTracker:
                 text = location_dict["text"]
                 
                 # Main Quest story order mapping
-                mq_order = {
+                mq_order_dict = {
                     "Deliver the Amulet": (1,1), "Breaking the Siege of Kvatch: Gate Closed": (1,2), "Breaking the Siege of Kvatch": (1,3),
                     "Battle for Castle Kvatch": (1,4), "Find the Heir": (1,5), "Weynon Priory": (1,6),
                     "The Path of Dawn: Acquire Commentaries Vol I": (2,1), "The Path of Dawn: Acquire Commentaries Vol II": (2,2),
@@ -423,7 +423,8 @@ class OblivionTracker:
                     "Bruma Gate": (2,20), "Miscarcand: Great Welkynd Stone": (2,21), "Miscarcand": (2,22), "Defense of Bruma": (2,23), "Great Gate": (2,24),
                     "Paradise: Bands of the Chosen Acquired": (3,1), "Paradise: Bands of the Chosen Removed": (3,2), "Paradise": (3,3),
                     "[Goal] Light the Dragonfires": (3,4),
-                }.get(text)
+                }
+                mq_order = mq_order_dict.get(text)
                 
                 # Category 0: Class Skills
                 if " Skill Increase " in text:
@@ -450,7 +451,7 @@ class OblivionTracker:
                     return (3, mq_order)
                 
                 # Category 4: Oblivion Gates (numeric) - but exclude MQ gates
-                elif "Gate" in text and "Closed" in text and text not in mq_order:
+                elif "Gate" in text and "Closed" in text and text not in mq_order_dict:
                     parts = text.split()
                     if len(parts) >= 3 and parts[0] == "Gate" and parts[1].isdigit() and parts[-1] == "Closed":
                         num = int(parts[1])
