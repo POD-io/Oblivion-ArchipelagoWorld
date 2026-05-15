@@ -100,7 +100,7 @@ class ClassSelection(Choice):
     """
     display_name = "Class Selection"
     option_off = 0
-    option_random = 1
+    option_random_class = 1
     option_acrobat = 2
     option_agent = 3
     option_archer = 4

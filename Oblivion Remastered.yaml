@@ -180,7 +180,7 @@ Oblivion Remastered:
     # 
     # When enabled, all associated major skills for the class will be checks.
     'off': 0
-    random: 50
+    random_class: 50
     acrobat: 0
     agent: 0
     archer: 0

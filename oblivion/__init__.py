@@ -122,7 +122,7 @@ class OblivionWorld(World):
             self.selected_class = pt["selected_class"]
         else:
             class_selection = self.options.class_selection.current_key
-            if class_selection == "random":
+            if class_selection == "random_class":
                 # Randomly select a class from all available options
                 available_classes = get_all_class_names()
                 selected_class = self.multiworld.random.choice(available_classes)
