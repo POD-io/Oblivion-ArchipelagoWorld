@@ -35,16 +35,59 @@ region_unlock_items = [
     "West Weald Access"
 ]
 
-# Useful items - Daedric Artifacts (powerful rewards)
+# Useful items - Daedric Artifacts
 useful_items = []
 
-# Filler items - Potions and Scrolls
+# Filler items - All filler categories combined with weighted distribution
 filler_items = [
-    # Potions
+    # Lockpick (25%)
+    "Lockpick",
+    "Lockpick",
+    "Lockpick",
+    "Lockpick",
+    "Lockpick",
+    
+    # Gold (20%)
+    "Gold (10)",
+    "Gold (10)",
+    "Gold (10)",
+    "Gold (10)",
+    
+    # Steel Arrows (20%)
+    "Steel Arrows",
+    "Steel Arrows",
+    "Steel Arrows",
+    "Steel Arrows",
+    
+    # Common Soul Gem (15%)
+    "Common Soul Gem",
+    "Common Soul Gem",
+    "Common Soul Gem",
+
+    # Repair Hammer (5%)
+    "Repair Hammer",
+
+    # Torch (5%)
+    "Torch",
+    
+    # Potion (5%) - random potion selection
+    "Random Potion",
+    
+    # Scroll (5%) - random scroll selection
+    "Random Scroll",
+]
+
+# Potions - Pool for random selection when "Random Potion" is chosen (5% of filler = 1.25% of total)
+# Equal weight between all potions
+potion_items = [
     "Strong Potion of Healing",
     "Strong Potion of Speed",
     "Skooma",
-    
+]
+
+# Scroll pool for random selection when "Random Scroll" is chosen (5% of filler = 1.25% of total)
+# Equal weight between all scrolls
+scroll_pool = [
     # Summoning Scrolls
     "Scroll of Frost Atronach",
     "Scroll of Fire Atronach",
@@ -86,7 +129,6 @@ filler_items = [
     "Scroll of Unlock",
     "Scroll of Light",
     "Scroll of Water Walking",
-    "Scroll of Beast of Burden",
 ]
 
 # Item table mapping names to data
@@ -122,6 +164,15 @@ for i in range(4):
     progression_items.append(progressive_shop_stock_item_name)
 current_id += 1
 
+# Sidequest License Items
+wealth_license_item_name = "Wealth Sidequest License"
+item_table[wealth_license_item_name] = ItemData(current_id, ItemClassification.progression_skip_balancing)
+current_id += 1
+
+exploration_license_item_name = "Exploration Sidequest License"
+item_table[exploration_license_item_name] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+
 # Progressive Class Level Items
 progressive_class_level_items = [
     "Progressive Acrobat Level",
@@ -151,14 +202,30 @@ for item_name in progressive_class_level_items:
     item_table[item_name] = ItemData(current_id, ItemClassification.progression)
     current_id += 1
 
-# Progressive Armor Set Items (5 total - unlocks tiers 1-5)
-# Tier 0 exists ingame, but we aren't currently using it
+# Progressive Armor Set Items (3 total - unlocks tiers 2, 4, 5; first one placed early)
+# Skips tiers 1 and 3 for better mid-late game scaling
 progressive_armor_set_item_name = "Progressive Armor Set"
 item_table[progressive_armor_set_item_name] = ItemData(current_id, ItemClassification.useful)
 
-#for i in range(5):
 for i in range(3):
     useful_items.append(progressive_armor_set_item_name)
+current_id += 1
+
+# Progressive Nirnroot Satchel (5 total - gates Nirnroot harvesting capacity)
+progressive_nirnroot_satchel_item_name = "Progressive Nirnroot Satchel"
+item_table[progressive_nirnroot_satchel_item_name] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+
+# Nirnroot (goal items for Nirnsanity - collected from multiworld)
+# These are the actual items needed for victory, separate from the harvesting locations
+nirnroot_item_name = "Nirnroot"
+item_table[nirnroot_item_name] = ItemData(current_id, ItemClassification.progression_skip_balancing)
+current_id += 1
+
+# Progressive Septim Satchel Items (5 total - gates gold collection capacity)
+# Unlike Nirnsanity, Treasure Hunter has no goal items - victory is achieved by reaching capacity thresholds with in-game gold
+progressive_septim_satchel_item_name = "Progressive Septim Satchel"
+item_table[progressive_septim_satchel_item_name] = ItemData(current_id, ItemClassification.progression)
 current_id += 1
 
 # Main Quest progression items (for Light the Dragonfires goal)
@@ -244,17 +311,103 @@ item_table[greater_soulgem_package_item_name] = ItemData(current_id, ItemClassif
 useful_items.append(greater_soulgem_package_item_name)
 current_id += 1
 
-# Add Gold item (each 'Gold' entry gives 500 gold in-game)
-gold_item_name = "Gold"
-item_table[gold_item_name] = ItemData(current_id, ItemClassification.useful)
-useful_items.append(gold_item_name)
+# Fire Arrow Bundle: Gives 100 fire-damage arrows
+fire_arrow_bundle_item_name = "Fire Arrow Bundle"
+item_table[fire_arrow_bundle_item_name] = ItemData(current_id, ItemClassification.useful)
+useful_items.append(fire_arrow_bundle_item_name)
 current_id += 1
 
-# Add Lockpick Set item (each entry gives 30 lockpicks in-game)
-lockpick_set_item_name = "Lockpick Set"
-item_table[lockpick_set_item_name] = ItemData(current_id, ItemClassification.useful)
-useful_items.append(lockpick_set_item_name)
-current_id += 1
+# Unique Merchant Items - Organized by equipment type
+# These are unique items that are not quest rewards or faction rewards
+# A random subset from each category will appear in each seed (see create_items in __init__.py)
+
+unique_weapons = [
+    "Akavari Sunderblade",
+    "Captain Kordan's Saber",
+    "Akavari Warblade",
+    "Truncheon of Submission",
+    "Battleaxe of Hatred",
+    "Destarine's Cleaver",
+    "Bow of Infliction",
+    "Redwave",
+    "Calliben's Grim Retort",
+    "Frostwyrm Bow",
+]
+
+unique_shields = [
+    "Aegis of the Apocalypse",
+    "Birthright of Astalon",
+    "Dondoran's Juggernaut",
+]
+
+unique_gauntlets = [
+    "Fists of the Drunkard",
+    "Gauntlets of Gluttony",
+    "Hands of the Atronach",
+    "Rasheda's Special",
+]
+
+unique_helmets = [
+    "Fin Gleam",
+    "Helm of the Deep Delver",
+    "Helm of Ferocity",
+    "Tower of the Nine",
+]
+
+unique_boots = [
+    "Boots of the Swift Merchant",
+    "Quicksilver Boots",
+    "Nistor's Boots",
+    "Boots of Springheel Jak",
+]
+
+unique_greaves = [
+    "Monkeypants",
+]
+
+unique_clothing = [
+    "Cowl of the Druid",
+    "Mantle of the Woodsman",
+    "Imperial Breeches",
+    "Apron of the Master Artisan",
+    "Robe of Creativity",
+    "Vest of the Bard",
+]
+
+unique_amulets = [
+    "Circlet of Omnipotence",
+]
+
+unique_rings = [
+    "Ring of Transmutation",
+    "Ring of Wortcraft",
+    "Spectre Ring",
+    "Ring of the Gray",
+]
+
+unique_staves = [
+    "Apotheosis",
+]
+
+# Combine all unique item categories
+unique_merchant_categories = {
+    "weapons": unique_weapons,
+    "shields": unique_shields,
+    "gauntlets": unique_gauntlets,
+    "helmets": unique_helmets,
+    "boots": unique_boots,
+    "greaves": unique_greaves,
+    "clothing": unique_clothing,
+    "amulets": unique_amulets,
+    "rings": unique_rings,
+    "staves": unique_staves,
+}
+
+# Add all unique merchant items to item_table but NOT to useful_items
+for category_items in unique_merchant_categories.values():
+    for unique_item_name in category_items:
+        item_table[unique_item_name] = ItemData(current_id, ItemClassification.useful)
+        current_id += 1
 
 # Add Fast Travel item
 fast_travel_item_name = "Fast Travel"
@@ -300,7 +453,38 @@ for attr_item in attribute_useful_items:
 # Add filler items
 for item_name in filler_items:
     item_table[item_name] = ItemData(current_id, ItemClassification.filler)
-    current_id += 1 
+    current_id += 1
+
+# Add potion items as filler
+for item_name in potion_items:
+    if item_name not in item_table:  # Avoid duplicates
+        item_table[item_name] = ItemData(current_id, ItemClassification.filler)
+        current_id += 1
+
+# Add all scroll pool items to item table (filler)
+for item_name in scroll_pool:
+    if item_name not in item_table:  # Avoid duplicates
+        item_table[item_name] = ItemData(current_id, ItemClassification.filler)
+        current_id += 1 
+
+# Trap items - replace a configurable percentage of filler slots
+trap_items = [
+    "Movement Trap",
+    "Storm Trap",
+    "Spawn Trap",
+]
+
+trap_code_map: Dict[str, str] = {
+    "Movement Trap": "APMovementTrapReceived",
+    "Storm Trap": "APStormTrapReceived",
+    "Spawn Trap": "APSpawnTrapReceived",
+}
+
+
+# Add trap items to item_table with trap classification
+for _trap_name in trap_items:
+    item_table[_trap_name] = ItemData(current_id, ItemClassification.trap)
+    current_id += 1
 
 # Item groups for hinting
 item_name_groups = {
@@ -308,6 +492,9 @@ item_name_groups = {
     "Oblivion Gate Key": ["Oblivion Gate Key"],
     "Progressive Arena Rank": ["Progressive Arena Rank"],
     "Progressive Shop Stock": ["Progressive Shop Stock"],
+    "Progressive Nirnroot Satchel": ["Progressive Nirnroot Satchel"],
+    "Progressive Septim Satchel": ["Progressive Septim Satchel"],
+    "Progressive Armor Set": ["Progressive Armor Set"],
     "Progressive Class Level": progressive_class_level_items,
     "Fortify Attribute": attribute_useful_items,
     "Region Access": region_unlock_items,

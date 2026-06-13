@@ -32,9 +32,9 @@ description: Default Oblivion Remastered Template
 
 game: Oblivion Remastered
 requires:
-  version: 0.6.4 # Version of Archipelago required for this yaml to work as expected.
+  version: 0.6.7 # Version of Archipelago required for this yaml to work as expected.
   game:
-    Oblivion Remastered: 0.4.5 # Version of the world required for this yaml to work as expected.
+    Oblivion Remastered: 0.5.0 # Version of the world required for this yaml to work as expected.
 
 Oblivion Remastered:
   ################
@@ -49,8 +49,9 @@ Oblivion Remastered:
     # Minimum value is 0
     # Maximum value is 99
     random: 0
-    random-low: 0
-    random-high: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-99: 0 # random value between 0 and 99
     disabled: 0 # equivalent to 0
     normal: 50 # equivalent to 50
     extreme: 0 # equivalent to 99
@@ -64,6 +65,14 @@ Oblivion Remastered:
     full: 50
     minimal: 0
 
+  death_link:
+    # When you die, everyone who enabled death link dies. Of course, the reverse is true too.
+    'false': 50
+    'true': 0
+
+  #####################
+  # Victory Condition #
+  #####################
   goal:
     # Choose your victory condition:
     # 
@@ -72,29 +81,19 @@ Oblivion Remastered:
     # Shrine Seeker: Complete X Daedric Shrine quests (number set by Shrine Goal)
     # Dungeon Delver: Complete all dungeons in your seed. (Regions * Dungeons per Region)
     # Light the Dragonfires: Complete the Main Quest
+    # Nirnsanity: Collect Nirnroot plants and complete the Seeking Your Roots quest
+    # Treasure Hunter: Collect a specific amount of gold (set by Gold Goal)
     arena: 0
     gatecloser: 0
     shrine_seeker: 0
     dungeon_delver: 0
     light_the_dragonfires: 50
+    nirnsanity: 0
+    treasure_hunter: 0
 
-  gate_count:
-    # Number of Oblivion Gates available as location checks. Gates require Oblivion Gate Keys to access.
-    # 
-    # When Goal is Gatecloser: You must close this many gates for victory.
-    # When Goal is NOT Gatecloser: This many gates are available as location checks.
-    # When Goal is Light the Dragonfires: This setting is ignored (set to 0 automatically).
-    # 
-    # Set to 0 to disable Gate content entirely (only allowed when Goal is not Gatecloser).
-    #
-    # You can define additional values between the minimum and maximum values.
-    # Minimum value is 0
-    # Maximum value is 10
-    5: 50
-    random: 0
-    random-low: 0
-    random-high: 0
-
+  ##########################
+  # Goal-Specific Settings #
+  ##########################
   shrine_goal:
     # For Shrine Seeker goal: How many Daedric Shrine quests you need to complete for victory.
     # You can complete any of the available shrines to reach this goal.
@@ -106,71 +105,193 @@ Oblivion Remastered:
     # Maximum value is 15
     5: 50
     random: 0
-    random-low: 0
-    random-high: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-15: 0 # random value between 1 and 15
 
+  gold_goal:
+    # For Treasure Hunter goal: How much gold you need to collect for victory.
+    # 
+    # Gold is tracked in increments with checks along the way.
+    # Your Gold capacity is gated by Progressive Septim Satchels.
+    # 
+    # Only relevant when Goal is Treasure Hunter. Ignored for other goals.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1000
+    # Maximum value is 100000
+    10000: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1000-100000: 0 # random value between 1000 and 100000
+
+  ##########################
+  # World Content Settings #
+  ##########################
   shrine_count:
     # Number of Daedric Shrine quests available as location checks. Shrines require Shrine Unlock Tokens to access.
     # 
     # When Goal is Shrine Seeker: This many total shrines are available, complete any X (set by Shrine Goal) to win.
     # When Goal is NOT Shrine Seeker: This many shrines are available as location checks.
-    # 
-    # Useful for increased routing flexibility.
-    # Set to 0 to disable shrine content entirely (only allowed when Goal is not Shrine Seeker).
     #
     # You can define additional values between the minimum and maximum values.
     # Minimum value is 0
     # Maximum value is 15
     5: 50
     random: 0
-    random-low: 0
-    random-high: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-15: 0 # random value between 0 and 15
+
+  gate_count:
+    # Number of Oblivion Gates available as location checks. Gates require Oblivion Gate Keys to access.
+    # 
+    # When Goal is Gatecloser: You must close this many gates for victory.
+    # When Goal is NOT Gatecloser: This many gates are available as location checks.
+    # When Goal is Light the Dragonfires: This setting is ignored.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 20
+    5: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-20: 0 # random value between 0 and 20
 
   arena_matches:
     # Number of Arena matches available as location checks. Arena matches require Arena Rank items to access.
     # 
     # When Goal is Arena: This setting is IGNORED - all 21 matches are always available and required for victory.
     # When Goal is NOT Arena: This many arena matches (1 through X) are available as location checks.
-    # 
-    # Set to 0 to disable arena content entirely (only allowed when Goal is not Arena).
-    # Note: Arena requires Progressive Arena Rank items to unlock each rank's matches.
     #
     # You can define additional values between the minimum and maximum values.
     # Minimum value is 0
     # Maximum value is 21
     12: 50
     random: 0
-    random-low: 0
-    random-high: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-21: 0 # random value between 0 and 21
+
+  nirnroot_count:
+    # Number of Nirnroot harvesting location checks available in the world.
+    # 
+    # When Goal is Nirnsanity: You must collect this many Nirnroot for victory. Your Nirnroot 
+    # harvesting limit is gated by Progressive Nirnroot Satchels.
+    # 
+    # When Goal is NOT Nirnsanity: This many Nirnroot plants are available as location checks. 
+    # All are immediately harvestable with no capacity restrictions.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 100
+    0: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-100: 0 # random value between 0 and 100
 
   region_unlocks:
     # Number of regions that will appear as unlock items.
-    # Only these regions' dungeons will be available as location checks.
+    # Only these regions' dungeons and sidequests will be available as location checks.
     # 
-    # Note: You are granted one of these region unlocks at the start of the game.
+    # Set to 0 to disable regional dungeon content entirely (only allowed when Goal is not Dungeon Delver).
+    # Note: When regions > 0, you are granted one region unlock at the start of the game.
     #
     # You can define additional values between the minimum and maximum values.
-    # Minimum value is 1
+    # Minimum value is 0
     # Maximum value is 10
     5: 50
     random: 0
-    random-low: 0
-    random-high: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-10: 0 # random value between 0 and 10
 
   dungeons_per_region:
     # Maximum number of dungeons selected from each unlocked region.
     # If Dungeon Delver is your goal, you will need to complete every dungeon in the selected regions.
     # 
     # Note: If a region has fewer dungeons than this value, all of its dungeons are selected.
+    # Note: This setting is ignored when region_unlocks is set to 0.
     #
     # You can define additional values between the minimum and maximum values.
-    # Minimum value is 1
+    # Minimum value is 0
     # Maximum value is 24
     3: 50
     random: 0
-    random-low: 0
-    random-high: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-24: 0 # random value between 0 and 24
 
+  wealth_sidequest_count:
+    # Number of wealth-focused sidequests that will be randomly selected and included in the seed.
+    # WARNING: These sidequests require accumulating a significant amount of gold to purchase expensive items.
+    # 
+    # Note: Most sidequests require specific region access. You may receive less sidequests depending on the value of RegionUnlocks above.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 10
+    0: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-10: 0 # random value between 0 and 10
+
+  exploration_sidequest_count:
+    # Number of exploration-focused sidequests that will be randomly selected and included in the seed.
+    # These sidequests involve exploration and adventure activities.
+    # 
+    # Note: Most sidequests require specific region access. You may receive less sidequests depending on the value of RegionUnlocks above.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 5
+    2: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-5: 0 # random value between 0 and 5
+
+  dungeon_kills:
+    # Number of dungeon kill location checks (enemies killed in dungeon or most interior cells).
+    # Set to 0 to disable dungeon kill checks.
+    # 
+    # When regions are enabled, checks are divided evenly across regions: each region unlock
+    # makes the next batch accessible. For example, 50 kills with 5 regions = 10 kills per
+    # region batch, so you start with 10 accessible and gain 10 more per region unlock.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 200
+    50: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-200: 0 # random value between 0 and 200
+
+  overworld_kills:
+    # Number of overworld kill location checks (enemies killed in Tamriel).
+    # Set to 0 to disable overworld kill checks.
+    # 
+    # When regions are enabled, checks are divided evenly across regions: each region unlock
+    # makes the next batch accessible. For example, 40 kills with 5 regions = 8 kills per
+    # region batch, so you start with 8 accessible and gain 8 more per region unlock.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 200
+    40: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-200: 0 # random value between 0 and 200
+
+  ################
+  # Class System #
+  ################
   class_selection:
     # Choose your character class:
     # 
@@ -180,7 +301,6 @@ Oblivion Remastered:
     # 
     # When enabled, all associated major skills for the class will be checks.
     'off': 0
-    random_class: 50
     acrobat: 0
     agent: 0
     archer: 0
@@ -202,6 +322,7 @@ Oblivion Remastered:
     thief: 0
     warrior: 0
     witchhunter: 0
+    random_class: 50
 
   class_level_maximum:
     # Maximum class level when Class Selection is enabled.
@@ -219,8 +340,9 @@ Oblivion Remastered:
     # Maximum value is 5
     3: 50
     random: 0
-    random-low: 0
-    random-high: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-5: 0 # random value between 1 and 5
 
   start_with_class:
     # When true: Start with your above selected class unlocked immediately.
@@ -266,6 +388,9 @@ Oblivion Remastered:
     Sneak: 0
     Speechcraft: 0
 
+  ###################
+  # Quality of Life #
+  ###################
   extra_gate_keys:
     # Additional Oblivion Gate Keys beyond the base amount needed.
     # 
@@ -277,8 +402,26 @@ Oblivion Remastered:
     # Maximum value is 5
     0: 50
     random: 0
-    random-low: 0
-    random-high: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-5: 0 # random value between 0 and 5
+
+  extra_nirnroot:
+    # Additional Nirnroot multiworld items beyond the Nirnroot Count setting.
+    # 
+    # Provides a buffer so you don't need to find every single Nirnroot location check.
+    # This adds extra Nirnroot items to the multiworld item pool.
+    # 
+    # Only relevant when Goal is Nirnsanity. Ignored for other goals.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 25
+    0: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-25: 0 # random value between 0 and 25
 
   gate_vision:
     # Determines how Oblivion Gate map markers are visible:
@@ -304,7 +447,7 @@ Oblivion Remastered:
     # When true: You cannot use fast travel until you receive the "Fast Travel" item from the multiworld.
     # When false: Fast travel is available from the start (vanilla behavior).
     # 
-    # Note: This affects ALL fast travel, not just dungeon markers. See "Dungeon Marker Mode" for dungeon-specific settings.
+    # Warning: Fast Travel item can be anywhere in the seed, including late locations.
     'false': 50
     'true': 0
 
@@ -317,6 +460,18 @@ Oblivion Remastered:
     # Note: This setting only affects dungeon map markers, not the overall fast travel system.
     reveal_and_fast_travel: 50
     reveal_only: 0
+
+  dungeon_warp:
+    # Automatically warp the player out to the overworld when completing a seeded dungeon.
+    # 
+    # Off: No warp (vanilla behavior)
+    # On: All dungeons that provide a check offer a warp-out option upon completion
+    # Item: Warp functionality unlocked when you receive the "Dungeon Warp" item from the multiworld
+    # Early Item: Same as Item, but the Dungeon Warp item is forced into early locations
+    'off': 0
+    'on': 0
+    item: 50
+    early_item: 0
 
   shop_scout_type:
     # How shop item scouting displays information.
@@ -338,15 +493,81 @@ Oblivion Remastered:
     'false': 50
     'true': 0
 
-  dungeon_warp:
-    # Automatically warp the player out to the overworld when completing a seeded dungeon.
+  auto_tracking:
+    # This feature enables auto-tracking for Nirnroot and Boss Chests.
     # 
-    # Off: No warp (vanilla behavior)
-    # On: All dungeons that provide a check offer a warp-out option upon completion
-    # Item: Warp functionality unlocked when you receive the "Dungeon Warp" item from the multiworld
-    'off': 0
-    'on': 0
-    item: 50
+    # When true: Guides the player to any nearby Nirnroot or Boss Chest(if included in seed). 
+    # Entering the overworld switches to Nirnroot tracking. Entering a
+    # dungeon switches to Boss Chest tracking.
+    # 
+    # Note: F11 can be used to manually cycle the mode or entirely disable the feature.
+    'false': 50
+    'true': 0
+
+  silent_auto_tracking:
+    # When enabled, auto-tracking updates the in-game quest marker silently -
+    # no guidance via Message is shown. Cuts down on notifications in the Message queue.
+    # 
+    # When disabled (default), compass direction is shown via Message 
+    # whenever the tracked target changes. 
+    # Note: The polarity of the message is incorrect in some dungeons.
+    'false': 50
+    'true': 0
+
+  #########
+  # Traps #
+  #########
+  trap_percentage:
+    # Percentage of filler item slots replaced by traps (0-20%). Set to 0 to disable traps entirely.
+    # Trap types and their relative frequency are controlled by the weight settings below.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 20
+    0: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-20: 0 # random value between 0 and 20
+
+  movement_trap_weight:
+    # Relative weight for Movement Trap. Set to 0 to disable this trap type.
+    # By default, 60% of traps will be Movement Traps.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 100
+    60: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-100: 0 # random value between 0 and 100
+
+  spawn_trap_weight:
+    # Relative weight for Spawn Trap. Set to 0 to disable this trap type.
+    # By default, 30% of traps will be Spawn Traps.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 100
+    30: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-100: 0 # random value between 0 and 100
+
+  storm_trap_weight:
+    # Relative weight for Storm Trap. Set to 0 to disable this trap type.
+    # By default, 10% of traps will be Storm Traps.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 100
+    10: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-100: 0 # random value between 0 and 100
 
   ###########################
   # Item & Location Options #

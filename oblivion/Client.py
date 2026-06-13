@@ -4,6 +4,7 @@ import platform
 import time
 from typing import Dict, List, Set
 from CommonClient import CommonContext, server_loop, gui_enabled, ClientCommandProcessor, logger, get_base_parser
+from MultiServer import mark_raw
 from NetUtils import ClientStatus
 
 # Import for tracker functionality
@@ -40,7 +41,7 @@ class OblivionTracker:
         self.shop_ids = set()
         for tier in self.shop_tiers:
             for value in tier:
-                loc_id = Locations.location_table.get(f"Shop Item Value {value}")
+                loc_id = Locations.location_table.get(f"Innkeeper Shop Item Value {value}")
                 if loc_id:
                     try:
                         self.shop_ids.add(loc_id.id)
@@ -130,10 +131,44 @@ class OblivionTracker:
     
     def check_location_accessibility(self, location_name):
         """Check if a location is accessible based on the game rules."""
+        slot_data = getattr(self.ctx, 'slot_data', {})
+        
+        # Check sidequest rules first
+        if location_name in Locations.WEALTH_SIDEQUESTS or location_name in Locations.EXPLORATION_SIDEQUESTS:
+            selected_sidequests = self.ctx.slot_data.get("selected_sidequests", [])
+            if location_name not in selected_sidequests:
+                return False
+            
+            # Check if this sidequest requires a region access item
+            region_name = Locations.SIDEQUEST_REGIONS.get(location_name)
+            has_license = False
+            
+            # Check if player has the required license
+            if location_name in Locations.WEALTH_SIDEQUESTS:
+                has_license = self.has("Wealth Sidequest License", 1)
+            elif location_name in Locations.EXPLORATION_SIDEQUESTS:
+                has_license = self.has("Exploration Sidequest License", 1)
+            
+            # If no license, can't access
+            if not has_license:
+                return False
+            
+            # If region is required, check region access
+            if region_name:
+                # Check if region starts unlocked
+                starting_unlocked = set(self.ctx.slot_data.get("starting_unlocked_regions", []) or [])
+                if region_name not in starting_unlocked:
+                    # Need region access item
+                    access_item_name = f"{region_name} Access"
+                    if not self.has(access_item_name, 1):
+                        return False
+            
+            return True
+        
+        # For other locations, check if in static location table
         if location_name not in Locations.location_table:
             return False
             
-        slot_data = getattr(self.ctx, 'slot_data', {})
         if not slot_data:
             return True
             
@@ -161,7 +196,7 @@ class OblivionTracker:
             return self.has("Oblivion Gate Key", 1, gate_num)
             
         # Check progressive shop stock rules
-        if location_name.startswith("Shop Item Value "):
+        if location_name.startswith("Innkeeper Shop Item Value "):
             value = int(location_name.split()[-1])
             if value in [1, 10, 100]:  # Set 1 - always available
                 return True
@@ -173,6 +208,70 @@ class OblivionTracker:
                 return self.has("Progressive Shop Stock", 1, 3)
             elif value in [5, 50, 500]:  # Set 5
                 return self.has("Progressive Shop Stock", 1, 4)
+
+        # Check Nirnroot harvesting rules
+        if location_name.startswith("Nirnroot ") and location_name.endswith(" Harvested"):
+            # When goal is NOT Nirnsanity: All Nirnroot locations are immediately accessible
+            goal = slot_data.get("goal")
+            if goal != "nirnsanity":
+                return True
+            
+            # When goal IS Nirnsanity: Gated by Progressive Nirnroot Satchel capacity
+            try:
+                # Extract the nirnroot number from "Nirnroot X Harvested"
+                parts = location_name.split()
+                nirnroot_num = int(parts[1])
+                
+                # Determine required satchel count based on capacity needed
+                if nirnroot_num <= 1:
+                    # First Nirnroot is within starting capacity
+                    return True
+                elif nirnroot_num <= 5:
+                    # Need 1 satchel for capacity 5
+                    return self.has("Progressive Nirnroot Satchel", 1, 1)
+                elif nirnroot_num <= 15:
+                    # Need 2 satchels for capacity 15
+                    return self.has("Progressive Nirnroot Satchel", 1, 2)
+                elif nirnroot_num <= 30:
+                    # Need 3 satchels for capacity 30
+                    return self.has("Progressive Nirnroot Satchel", 1, 3)
+                elif nirnroot_num <= 50:
+                    # Need 4 satchels for capacity 50
+                    return self.has("Progressive Nirnroot Satchel", 1, 4)
+                else:  # 51-100
+                    # Need 5 satchels for capacity 100
+                    return self.has("Progressive Nirnroot Satchel", 1, 5)
+            except (ValueError, IndexError):
+                return False
+
+        # Check Gold collection rules (Treasure Hunter goal)
+        if location_name.startswith("Gold: ") and location_name.endswith(" Collected"):
+            try:
+                # Extract the gold amount from "Gold: X Collected"
+                parts = location_name.split()
+                gold_amount = int(parts[1])
+                
+                # Determine required satchel count based on capacity needed
+                if gold_amount <= 1000:
+                    # Within starting capacity
+                    return True
+                elif gold_amount <= 2500:
+                    # Need 1 satchel for capacity 2500
+                    return self.has("Progressive Septim Satchel", 1, 1)
+                elif gold_amount <= 5000:
+                    # Need 2 satchels for capacity 5000
+                    return self.has("Progressive Septim Satchel", 1, 2)
+                elif gold_amount <= 10000:
+                    # Need 3 satchels for capacity 10000
+                    return self.has("Progressive Septim Satchel", 1, 3)
+                elif gold_amount <= 25000:
+                    # Need 4 satchels for capacity 25000
+                    return self.has("Progressive Septim Satchel", 1, 4)
+                else:
+                    # Need 5 satchels for unlimited capacity
+                    return self.has("Progressive Septim Satchel", 1, 5)
+            except (ValueError, IndexError):
+                return False
 
         # Main Quest milestone rules
         if location_name == "Deliver the Amulet":
@@ -383,7 +482,23 @@ class OblivionTracker:
             if region_name in starting_unlocked:
                 return True
             return self.has(access_item_name, 1)
-                
+
+        # Kill location access: gated by region unlock count in batches
+        if location_name.startswith("Dungeon Kill ") or location_name.startswith("Overworld Kill "):
+            try:
+                import math
+                kill_type = "dungeon" if location_name.startswith("Dungeon Kill ") else "overworld"
+                kill_num = int(location_name.split()[-1])
+                kills_per_region = slot_data.get(f"{kill_type}_kills_per_region", 0)
+                selected_regions = slot_data.get("selected_regions", []) or []
+                if not selected_regions or kills_per_region == 0:
+                    return True
+                required_regions = math.ceil(kill_num / kills_per_region)
+                regions_unlocked = sum(1 for r in selected_regions if self.has(f"{r} Access", 1))
+                return regions_unlocked >= required_regions
+            except (ValueError, IndexError):
+                return True
+
         return True
     
     def update_locations(self):
@@ -461,31 +576,73 @@ class OblivionTracker:
                         return (4, 9999, text)
                 
                 # Category 5: Shop Items
-                elif "Shop Item Value" in text:
+                elif "Innkeeper Shop Item Value" in text:
                     num = int(text.split()[-1])
                     return (5, num)
                 
-                # Category 6: Everything else (Visit an Ayleid Well, etc.)
+                # Category 6: Gold Collection (Treasure Hunter goal)
+                elif text.startswith("Gold: ") and text.endswith(" Collected"):
+                    try:
+                        # Extract gold amount from "Gold: X Collected"
+                        parts = text.split()
+                        amount = int(parts[1])
+                        return (6, amount)
+                    except (ValueError, IndexError):
+                        return (6, 999999, text)
+                
+                # Category 7: Nirnroot Harvesting (Nirnsanity goal)
+                elif text.startswith("Nirnroot ") and text.endswith(" Harvested"):
+                    try:
+                        parts = text.split()
+                        num = int(parts[1])
+                        return (7, num)
+                    except (ValueError, IndexError):
+                        return (7, 999999, text)
+                
+                # Category 8: Sidequests (Wealth and Exploration)
+                elif text in Locations.SIDEQUEST_METADATA:
+                    # Sort by type (Wealth=0, Exploration=1) then alphabetically
+                    if text in Locations.WEALTH_SIDEQUESTS:
+                        return (8, 0, text)
+                    elif text in Locations.EXPLORATION_SIDEQUESTS:
+                        return (8, 1, text)
+                    else:
+                        return (8, 2, text)
+                
+                # Category 9: Kill locations
+                elif "Overworld Kill" in text or "Dungeon Kill" in text:
+                    # extract last number safely
+                    num = int(text.split()[-1])
+                    
+                    if "Overworld Kill" in text:
+                        return (10, 0, num, text)
+                    else:  # Dungeon Kill
+                        return (10, 1, num, text)
+                
+                # Category 10: Everything else
                 else:
-                    return (6, text)
+                    return (9, text)
             
             sorted_locations = sorted(accessible_locations, key=natural_sort_key)
-            # Append (Region) to dungeon names in tracker for clarity
+            # Append (Region) to dungeon names, (gold cost) to sidequests in tracker for clarity
             for entry in sorted_locations:
                 name = entry["text"]
                 if name in Locations.DUNGEON_REGIONS:
                     entry["text"] = f"{name} ({Locations.DUNGEON_REGIONS[name]})"
                 elif name in self.stone_regions:
                     entry["text"] = f"{name} ({self.stone_regions[name]})"
+                elif name in Locations.SIDEQUEST_METADATA:
+                    gold_cost = Locations.SIDEQUEST_METADATA[name]
+                    if gold_cost > 0:
+                        entry["text"] = f"{name} ({gold_cost} gold)"
 
             if sorted_locations:
                 self.ctx.tab_locations.content.data = sorted_locations
             else:
                 self.ctx.tab_locations.content.data = [{"text": "All currently available locations have been checked."}]
 
-    # ===== SHOP SCOUT / TAB LOGIC =====
     def _shop_get_location_id(self, value: int):
-        loc_name = f"Shop Item Value {value}"
+        loc_name = f"Innkeeper Shop Item Value {value}"
         data = Locations.location_table.get(loc_name)
         if data:
             return data.id
@@ -508,7 +665,7 @@ class OblivionTracker:
             
         to_scout_ids = []
         for tier_index, tier in enumerate(self.shop_tiers, start=1):
-            accessible_values = [v for v in tier if self.check_location_accessibility(f"Shop Item Value {v}")]
+            accessible_values = [v for v in tier if self.check_location_accessibility(f"Innkeeper Shop Item Value {v}")]
             tier_in_logic = bool(accessible_values) if tier_index == 1 else len(accessible_values) == len(tier)
             if not tier_in_logic or tier_index in self._shop_tier_unlocked:
                 continue
@@ -767,65 +924,111 @@ class OblivionTracker:
         
         goal_display = goal_key.replace('_', ' ').title()
         out_rows.append({"text": f"[b]Goal: {goal_display}[/b]"})
+        out_rows.append({"text": "[i]*Counts reflect server state and may include locations checked via !collect[/i]"})
         out_rows.append({"text": ""})
         
         if goal_key == "gatecloser":
-            # Gate Closer: Show gate keys collected
+            # Gate Closer: Show gate keys collected and closed gates count
             gate_count = slot_data.get("gate_count_required", 5)
             gate_keys_collected = self.items.get("Oblivion Gate Key", 0)
             
+            # Count gates closed from checked_locations
+            gates_closed = 0
+            for i in range(1, gate_count + 1):
+                location_name = f"Gate {i} Closed"
+                if self.is_location_checked(location_name):
+                    gates_closed += 1
+            
             out_rows.append({"text": f"[b]Gate Keys:[/b] {gate_keys_collected}/{gate_count}"})
+            out_rows.append({"text": f"[b]Gates Closed:[/b] {gates_closed}/{gate_count}"})
             out_rows.append({"text": ""})
             
             for i in range(1, gate_count + 1):
-                if i <= gate_keys_collected:
-                    out_rows.append({"text": f"[color=00ff00]Gate Key {i}[/color]"})
+                gate_closed = self.is_location_checked(f"Gate {i} Closed")
+                has_key = i <= gate_keys_collected
+                
+                if gate_closed:
+                    out_rows.append({"text": f"[color=00ff00]Gate {i} - Closed[/color]"})
+                elif has_key:
+                    out_rows.append({"text": f"Gate {i} - Key obtained"})
                 else:
-                    out_rows.append({"text": f"Gate Key {i}"})
+                    out_rows.append({"text": f"Gate {i}"})
             
-            # Check if goal is accessible (have enough keys to close required gates)
+            # Check if goal is accessible and/or complete
             out_rows.append({"text": ""})
-            if gate_keys_collected >= gate_count:
-                out_rows.append({"text": "[color=00ff00][GO MODE - Close your gates to win!][/color]"})
+            if gates_closed >= gate_count:
+                out_rows.append({"text": "[color=00ff00]Goal Complete![/color]"})
+            elif gate_keys_collected >= gate_count:
+                out_rows.append({"text": "[color=FFD700][b]GO MODE — Close your gates to win![/b][/color]"})
         
         elif goal_key == "shrine_seeker":
-            # Shrine Seeker: Show shrine tokens collected vs needed
+            # Shrine Seeker: Show shrine quest completions from checked_locations
             shrine_goal = slot_data.get("shrine_goal", 5)
             shrine_count = slot_data.get("shrine_count", 10)
+            active_shrines = slot_data.get("active_shrines", []) or []
             
-            # Count total shrine tokens collected
+            # Count quest completions from checked_locations
+            checked_locations = getattr(self.ctx, 'checked_locations', set())
+            shrine_completions = 0
+            for shrine in active_shrines:
+                location_name = f"{shrine} Quest Complete"
+                if self.is_location_checked(location_name):
+                    shrine_completions += 1
+            
+            # Count shrine tokens collected (enables quests)
             total_tokens = sum(count for item_name, count in self.items.items() 
                              if "Shrine Token" in item_name)
             
-            out_rows.append({"text": f"[b]Shrine Quests Complete:[/b] {total_tokens}/{shrine_goal}"})
+            out_rows.append({"text": f"[b]Shrine Quests Complete:[/b] {shrine_completions}/{shrine_goal}"})
+            out_rows.append({"text": f"[b]Shrine Tokens Collected:[/b] {total_tokens}/{shrine_count}"})
             out_rows.append({"text": f"(Any {shrine_goal} of {shrine_count} available shrines)"})
             out_rows.append({"text": ""})
             
-            if total_tokens >= shrine_goal:
+            if shrine_completions >= shrine_goal:
                 out_rows.append({"text": "[color=00ff00]Goal Complete![/color]"})
-                out_rows.append({"text": ""})
-                out_rows.append({"text": "[color=00ff00][GO MODE - Victory achieved!][/color]"})
+            elif total_tokens >= shrine_goal:
+                out_rows.append({"text": "[color=FFD700][b]GO MODE — Complete your shrine quests to win![/b][/color]"})
             else:
-                out_rows.append({"text": f"Need {shrine_goal - total_tokens} more shrine token(s)"})
+                out_rows.append({"text": f"Go Mode: Need {shrine_goal - shrine_completions} more shrine quest(s)"})
         
         elif goal_key == "arena":
-            # Arena: Show Progressive Arena Rank progress
+            # Arena: Show Progressive Arena Rank progress and matches won
             arena_rank_count = self.items.get("Progressive Arena Rank", 0)
             ranks = ["Pit Dog", "Brawler", "Bloodletter", "Myrmidon", "Warrior", "Gladiator", "Hero", "Grand Champion"]
             
+            # Count arena matches won from checked_locations
+            matches_won = 0
+            total_matches = 21  # 7 ranks × 3 matches per rank
+            for i in range(1, total_matches + 1):
+                location_name = f"Arena Match {i} Victory"
+                if self.is_location_checked(location_name):
+                    matches_won += 1
+            
             out_rows.append({"text": f"[b]Arena Ranks:[/b] {arena_rank_count}/{len(ranks)}"})
+            out_rows.append({"text": f"[b]Matches Won:[/b] {matches_won}/{total_matches}"})
             out_rows.append({"text": ""})
             
             for i, rank in enumerate(ranks):
-                if i < arena_rank_count:
-                    out_rows.append({"text": f"[color=00ff00]{rank}[/color]"})
+                has_rank = i < arena_rank_count
+                # Check if all 3 matches for this rank are complete
+                matches_for_rank = []
+                for match_num in range(i * 3 + 1, (i + 1) * 3 + 1):
+                    if match_num <= total_matches:
+                        matches_for_rank.append(self.is_location_checked(f"Arena Match {match_num} Victory"))
+                
+                rank_complete = all(matches_for_rank) if matches_for_rank else False
+                
+                if rank_complete:
+                    out_rows.append({"text": f"[color=00ff00]{rank} - Complete[/color]"})
+                elif has_rank:
+                    out_rows.append({"text": f"[color=ffff00]{rank} - Rank obtained[/color]"})
                 else:
                     out_rows.append({"text": f"{rank}"})
             
-            # Check if goal is accessible (all 7 ranks collected)
+            # Check if goal is accessible
             out_rows.append({"text": ""})
             if arena_rank_count >= 7:
-                out_rows.append({"text": "[color=00ff00][GO MODE - Complete Arena to become Grand Champion!][/color]"})
+                out_rows.append({"text": "[color=FFD700][b]GO MODE — Complete Arena to become Grand Champion![/b][/color]"})
         
         elif goal_key == "light_the_dragonfires":
             # Required items for victory (items needed to reach Paradise and complete MQ)
@@ -839,7 +1042,7 @@ class OblivionTracker:
                 "Decoded Page of the Xarxes: Sigillum",
                 "Paradise Access",
             ]
-            
+
             # Optional items
             optional_mq_items = [
                 "Encrypted Scroll of the Blades",
@@ -847,7 +1050,7 @@ class OblivionTracker:
                 "Blades' Report: Strangers at Dusk",
                 "Bruma Gate Key",
             ]
-            
+
             # Required items section
             out_rows.append({"text": "[b]Required for Victory:[/b]"})
             required_collected = 0
@@ -858,7 +1061,7 @@ class OblivionTracker:
                     required_collected += 1
                 else:
                     out_rows.append({"text": f"{item_name}"})
-            
+
             # Optional progression items section
             out_rows.append({"text": ""})
             out_rows.append({"text": "[b]Optional Progression Items:[/b]"})
@@ -868,15 +1071,17 @@ class OblivionTracker:
                     out_rows.append({"text": f"[color=00ff00]{item_name}[/color]"})
                 else:
                     out_rows.append({"text": f"{item_name}"})
-            
+
             # Check location completions for victory condition
             has_weynon_complete = self.is_location_checked("Weynon Priory")
             has_dagon_complete = self.is_location_checked("Dagon Shrine")
-            
-            # Check if goal is accessible - need all required items + Weynon Priory + Dagon Shrine locations checked
-            if required_collected >= len(required_for_victory) and has_weynon_complete and has_dagon_complete:
-                out_rows.append({"text": ""})
-                out_rows.append({"text": "[color=00ff00][GO MODE - Light the Dragonfires to win!][/color]"})
+            has_dragonfires_complete = self.is_location_checked("Light the Dragonfires")
+
+            out_rows.append({"text": ""})
+            if has_dragonfires_complete:
+                out_rows.append({"text": "[color=00ff00]Goal Complete![/color]"})
+            elif required_collected >= len(required_for_victory) and has_weynon_complete and has_dagon_complete:
+                out_rows.append({"text": "[color=FFD700][b]GO MODE — Light the Dragonfires to win![/b][/color]"})
         
         elif goal_key == "dungeon_delver":
             # Dungeon Delver: Show dungeons completed per region
@@ -888,6 +1093,8 @@ class OblivionTracker:
             
             checked_locations = getattr(self.ctx, 'checked_locations', set())
             regions_unlocked = 0
+            total_dungeons = 0
+            total_completed = 0
             
             for region in sorted(selected_regions):
                 region_dungeons = dungeons_by_region.get(region, [])
@@ -899,6 +1106,8 @@ class OblivionTracker:
                         completed += 1
                 
                 total = len(region_dungeons)
+                total_dungeons += total
+                total_completed += completed
                 
                 # Check if we have region access
                 access_item = f"{region} Access"
@@ -910,17 +1119,152 @@ class OblivionTracker:
                 
                 if completed == total and total > 0:
                     out_rows.append({"text": f"[color=00ff00]{region}: {completed}/{total}[/color]"})
+                elif has_access:
+                    out_rows.append({"text": f"[color=00BFFF]{region}: {completed}/{total}[/color]"})
                 else:
                     out_rows.append({"text": f"{region}: {completed}/{total}"})
             
-            # Check if goal is accessible
-            if regions_unlocked >= len(selected_regions) and len(selected_regions) > 0:
+            # Check if goal is complete or accessible
+            out_rows.append({"text": ""})
+            if total_dungeons > 0 and total_completed >= total_dungeons:
+                out_rows.append({"text": "[color=00ff00]Goal Complete![/color]"})
+            elif regions_unlocked >= len(selected_regions) and len(selected_regions) > 0:
+                out_rows.append({"text": "[color=FFD700][b]GO MODE — All regions unlocked! Clear all dungeons for victory.[/b][/color]"})
+        
+        elif goal_key == "nirnsanity":
+            # Nirnsanity: Track count of received Nirnroots and harvesting progress
+            nirnroot_count = slot_data.get("nirnroot_count", 100)
+            extra_nirnroots = slot_data.get("extra_nirnroot", 0)
+            total_nirnroots_available = nirnroot_count + extra_nirnroots
+            nirnroots_collected = self.items.get("Nirnroot", 0)
+            
+            # Display collected count in green when goal is reached
+            out_rows.append({"text": "[b][color=FFD700]Nirnroot Items (from multiworld) [/color][/b]"})
+            if nirnroots_collected >= nirnroot_count:
+                if extra_nirnroots > 0:
+                    out_rows.append({"text": f"  [color=00ff00]Collected: {nirnroots_collected}/{nirnroot_count}[/color] ({total_nirnroots_available} available)"})
+                else:
+                    out_rows.append({"text": f"  [color=00ff00]Collected: {nirnroots_collected}/{nirnroot_count}[/color]"})
+            else:
+                if extra_nirnroots > 0:
+                    out_rows.append({"text": f"  Collected: {nirnroots_collected}/{nirnroot_count} ({total_nirnroots_available} available)"})
+                else:
+                    out_rows.append({"text": f"  Collected: {nirnroots_collected}/{nirnroot_count}"})
+            
+            out_rows.append({"text": ""})
+            
+            # Count harvested nirnroots from checked locations
+            harvested_count = 0
+            for i in range(1, nirnroot_count + 1):
+                location_name = f"Nirnroot {i} Harvested"
+                if self.is_location_checked(location_name):
+                    harvested_count += 1
+            
+            # Calculate current capacity and remaining harvest checks
+            nirnroot_satchels = self.items.get("Progressive Nirnroot Satchel", 0)
+            satchel_capacities = [1, 5, 15, 30, 50, 100]
+            current_capacity = satchel_capacities[nirnroot_satchels] if nirnroot_satchels < len(satchel_capacities) else 100
+            
+            # Show harvest progress
+            out_rows.append({"text": "[b]In-Game Harvesting Checks:[/b]"})
+            out_rows.append({"text": f"  Harvested: {harvested_count}/{nirnroot_count}"})
+            out_rows.append({"text": f"  Current bag capacity: {current_capacity}"})
+            
+            # Show remaining checks with current bag
+            remaining_this_bag = max(0, current_capacity - harvested_count)
+            if remaining_this_bag > 0:
+                out_rows.append({"text": f"  Remaining with current bag: {remaining_this_bag}"})
+            
+            # Show total remaining once all bags obtained
+            if nirnroot_satchels >= len(satchel_capacities) - 1:  # Have all bags
+                total_remaining = nirnroot_count - harvested_count
+                out_rows.append({"text": f"  Total remaining (all bags): {total_remaining}"})
+            
+            out_rows.append({"text": ""})
+            
+            # Show progression satchels needed for this goal
+            out_rows.append({"text": "[b]Progression Items:[/b]"})
+            nirnroot_satchels = self.items.get("Progressive Nirnroot Satchel", 0)
+            satchel_capacities = [1, 5, 15, 30, 50, 100]
+            capacity_gates = [5, 15, 30, 50, 100]
+            
+            # Only show satchels needed to reach goal (find minimum capacity >= goal)
+            needed_capacity = min((c for c in capacity_gates if c >= nirnroot_count), default=100)
+            satchels_needed = sum(1 for c in capacity_gates if c <= needed_capacity)
+            
+            for i in range(satchels_needed):
+                has_satchel = i < nirnroot_satchels
+                capacity = satchel_capacities[i + 1]
+                if has_satchel:
+                    out_rows.append({"text": f"[color=00ff00]Progressive Nirnroot Satchel {i+1} (Capacity: {capacity})[/color]"})
+                else:
+                    out_rows.append({"text": f"Progressive Nirnroot Satchel {i+1} (Capacity: {capacity})"})
+            
+            # Check if goal is complete
+            out_rows.append({"text": ""})
+            nirnsanity_complete = self.is_location_checked("Nirnsanity")
+            
+            if nirnsanity_complete:
+                out_rows.append({"text": "[color=00ff00]Goal Complete![/color]"})
+        
+        elif goal_key == "treasure_hunter":
+            # Treasure Hunter: Track septim satchels needed to reach gold goal amount
+            gold_goal = slot_data.get("gold_goal", 10000)
+            septim_satchels = self.items.get("Progressive Septim Satchel", 0)
+            
+            # Satchel capacities
+            satchel_capacities = [1000, 2500, 5000, 10000, 25000, float('inf')]
+            current_capacity = satchel_capacities[septim_satchels] if septim_satchels < len(satchel_capacities) else float('inf')
+            
+            # Determine how many satchels are needed for the goal
+            needed_satchels = 0
+            for i, cap in enumerate(satchel_capacities):
+                if cap >= gold_goal:
+                    needed_satchels = i
+                    break
+            
+            out_rows.append({"text": f"[b]Gold Goal:[/b] {gold_goal:,}"})
+            # Display current capacity
+            if current_capacity == float('inf'):
+                out_rows.append({"text": "[b]Current Capacity:[/b] Unlimited"})
+            else:
+                out_rows.append({"text": f"[b]Current Capacity:[/b] {int(current_capacity):,} gold"})
+            out_rows.append({"text": ""})
+            
+            # Show only the satchels needed for the goal
+            if needed_satchels > 0:
+                out_rows.append({"text": "[b]Progressive Septim Satchels:[/b]"})
+                for i in range(needed_satchels):
+                    has_satchel = i < septim_satchels
+                    capacity = satchel_capacities[i + 1]
+                    # Format capacity display
+                    if capacity == float('inf'):
+                        capacity_str = "Unlimited"
+                    else:
+                        capacity_str = f"{int(capacity):,}"
+                    
+                    if has_satchel:
+                        out_rows.append({"text": f"[color=00ff00]Satchel {i+1}: {capacity_str} capacity[/color]"})
+                    else:
+                        out_rows.append({"text": f"Satchel {i+1}: {capacity_str} capacity"})
                 out_rows.append({"text": ""})
-                out_rows.append({"text": "[color=00ff00][GO MODE - All regions unlocked! Clear all dungeons to win!][/color]"})
+            
+            # Check if goal is complete or in go mode
+            treasure_hunter_complete = self.is_location_checked("Treasure Hunter")
+            
+            if treasure_hunter_complete:
+                out_rows.append({"text": "[color=00ff00]Goal Complete![/color]"})
+            elif current_capacity >= gold_goal:
+                out_rows.append({"text": "[color=FFD700][b]GO MODE — Collect in-game gold to reach your goal![/b][/color]"})
+            else:
+                if current_capacity == float('inf'):
+                    out_rows.append({"text": f"Need capacity of {gold_goal:,} (currently Unlimited)"})
+                else:
+                    out_rows.append({"text": f"Need capacity of {gold_goal:,} (currently {int(current_capacity):,})"})
         
         else:
             out_rows.append({"text": "Unknown goal type."})
-        
+
         self.ctx.tab_goal.content.data = out_rows
     
     def has(self, item, player, count=1):
@@ -956,10 +1300,10 @@ def _find_proton_save_path():
     # Search common Steam library locations
     home = os.path.expanduser("~")
     search_roots = [
-        f"{home}/.local/share/Steam",           # Standard Steam
-        f"{home}/.steam/debian-installation/",  # Standard Debian install
-        f"{home}/.var/app/com.valvesoftware.Steam/.local/share/Steam",  # Flatpak
-        f"{home}/snap/steam/common/.local/share/Steam",  # Snap
+        f"{home}/.local/share/Steam",                                            # Standard Steam
+        f"{home}/.steam/debian-installation/",                                   # Debian
+        f"{home}/.var/app/com.valvesoftware.Steam/.local/share/Steam",           # Flatpak
+        f"{home}/snap/steam/common/.local/share/Steam",                          # Snap
         "/mnt/*",
         "/media/*"
     ]
@@ -973,19 +1317,74 @@ def _find_proton_save_path():
     return None
 
 
+def _load_path_override(default_path: str) -> tuple[str, str]:
+    """Check for path_override.txt in default location and load custom path if valid."""
+    override_file = os.path.join(default_path, "path_override.txt")
+    if not os.path.exists(override_file):
+        return default_path, ""  # No override file, use default
+    
+    try:
+        with open(override_file, 'r') as f:
+            custom_path = f.readline().strip()
+    except Exception as e:
+        return default_path, f"Error reading path_override.txt: {e}"
+    
+    if not custom_path or custom_path == "":
+        return default_path, "Path override file is empty, using default path"
+    
+    # Normalize the path
+    custom_path = custom_path.replace("/", os.sep)
+    custom_path = custom_path.rstrip(os.sep)
+    
+    # Validate the path
+    if custom_path == "" or (os.sep not in custom_path and ":" not in custom_path):
+        return default_path, f"Invalid path in override file: {custom_path}"
+    
+    # Accept the path
+    custom_path = os.path.expanduser(custom_path)
+    return custom_path, f"Path override loaded: {custom_path}"
+
+
 class OblivionClientCommandProcessor(ClientCommandProcessor):
+    @mark_raw
     def _cmd_set_save_path(self, path: str = ""):
         """Set Oblivion save path manually."""
         if not path:
             self.output("Usage: /set_save_path <path>")
             return True
+        
+        # Require disconnection before changing path
+        if hasattr(self.ctx, 'slot_data') and self.ctx.slot_data:
+            self.output("Error: You must disconnect from the multiworld before changing the save path.")
+            return True
+        
+        # Normalize the path
         path = os.path.expanduser(path)
-        if path.endswith("/Saved") or path.endswith("/Saved/"):
-            path = os.path.join(path.rstrip("/"), "Archipelago")
+        if path.endswith(os.sep + "Saved"):
+            path = os.path.join(path, "Archipelago")
+        
+        # Convert to absolute path to ensure it's valid
+        path = os.path.abspath(path)
+        
         try:
             os.makedirs(path, exist_ok=True)
             self.ctx.oblivion_save_path = path
             self.output(f"Path set to: {path}")
+
+            # Write path_override.txt to the default Archipelago directory so the path
+            # persists across game launches (Lua mod reads this file at startup).
+            if platform.system() == "Windows":
+                default_path = os.path.join(
+                    os.environ.get("USERPROFILE", ""),
+                    "Documents", "My Games", "Oblivion Remastered", "Saved", "Archipelago"
+                )
+            else:
+                default_path = os.path.join(os.path.expanduser("~"), ".config", "Archipelago", "oblivion")
+            os.makedirs(default_path, exist_ok=True)
+            override_file = os.path.join(default_path, "path_override.txt")
+            with open(override_file, 'w') as f:
+                f.write(path + "\n")
+            self.output(f"Saved to path_override.txt — path will persist across launches.")
         except Exception as e:
             self.output(f"Error: {e}")
         return True
@@ -1057,9 +1456,48 @@ class OblivionClientCommandProcessor(ClientCommandProcessor):
                 self.output(f"- Total Class Skill Checks: {total_class_checks}")
             else:
                 self.output(f"\nClass System: Disabled (no skill checks available)")
+    
+    def _cmd_regions(self):
+        """Display all regions with their dungeons and doomstones."""
+        from worlds.oblivion.Locations import DUNGEON_REGIONS, DOOMSTONE_REGIONS
+        
+        # Organize dungeons by region
+        regions_data = {}
+        for dungeon, region in DUNGEON_REGIONS.items():
+            if region not in regions_data:
+                regions_data[region] = {"dungeons": [], "doomstones": []}
+            regions_data[region]["dungeons"].append(dungeon)
+        
+        # Add doomstones to regions
+        for doomstone_location, region in DOOMSTONE_REGIONS.items():
+            # Extract stone name from "Visit the X Stone" format
+            stone_name = doomstone_location.replace("Visit the ", "").replace(" Stone", "")
+            if region in regions_data:
+                regions_data[region]["doomstones"].append(stone_name)
+        
+        # Display in alphabetical order
+        self.output("=== CYRODIIL REGIONS ===\n")
+        for region in sorted(regions_data.keys()):
+            data = regions_data[region]
+            dungeon_count = len(data["dungeons"])
             
-            # Gate keys if relevant
-            if gate_count > 0:
+            self.output(f"[{region}]")
+            if data["doomstones"]:
+                doomstones_str = ", ".join(sorted(data["doomstones"]))
+                self.output(f"  Doomstones: {doomstones_str}")
+            else:
+                self.output(f"  Doomstones: None")
+            self.output(f"  Dungeons ({dungeon_count}):")
+            
+            # Sort and display dungeons in columns
+            dungeons = sorted(data["dungeons"])
+            for dungeon in dungeons:
+                self.output(f"    - {dungeon}")
+            self.output("")
+        
+        # Gate keys if relevant
+        gate_count = self.ctx.slot_data.get("gate_count_required", 0)
+        if gate_count > 0:
                 extra_keys = self.ctx.slot_data.get("extra_gate_keys", 0)
                 total_keys = gate_count + extra_keys
                 self.output(f"\nGate keys: {total_keys} total ({extra_keys} extra)")
@@ -1080,19 +1518,30 @@ class OblivionContext(CommonContext):
         
         # File system paths
         if platform.system() == "Windows":
-            self.oblivion_save_path = os.path.join(
+            default_path = os.path.join(
                 os.environ.get("USERPROFILE", ""), 
                 "Documents", "My Games", "Oblivion Remastered", "Saved", "Archipelago"
             )
+            self.oblivion_save_path = default_path
         else:
             # Linux: Auto-detect Proton prefix
             detected = _find_proton_save_path()
             if detected:
-                self.oblivion_save_path = detected
+                default_path = detected
                 self._path_detection_message = f"Auto-detected save path: {detected}"
             else:
-                self.oblivion_save_path = os.path.join(os.path.expanduser("~"), ".config", "Archipelago", "oblivion")
-                self._path_detection_message = f"Could not auto-detect save path. Using: {self.oblivion_save_path}\nUse /set_save_path <path> if incorrect"
+                default_path = os.path.join(os.path.expanduser("~"), ".config", "Archipelago", "oblivion")
+                self._path_detection_message = f"Could not auto-detect save path. Using: {default_path}\nUse /set_save_path <path> if incorrect"
+            self.oblivion_save_path = default_path
+        
+        # Check for path override file in the default location
+        new_path, status = _load_path_override(default_path)
+        self._path_override_message = ""
+        if status:
+            (logger.warning if "Error" in status or "Invalid" in status else logger.info)(status)
+            if "loaded" in status.lower():
+                self.oblivion_save_path = new_path
+                self._path_override_message = status
         
         # Completion token mapping: mod token -> location name
         self.completion_tokens = {
@@ -1133,22 +1582,22 @@ class OblivionContext(CommonContext):
             "APArenaMatch19Victory": "Arena Match 19 Victory",
             "APArenaMatch20Victory": "Arena Match 20 Victory",
             "APArenaMatch21Victory": "Arena Match 21 Victory",
-            # Progressive Shop Stock checks
-            "APShopTokenValue1CompletionToken": "Shop Item Value 1",
-            "APShopTokenValue10CompletionToken": "Shop Item Value 10", 
-            "APShopTokenValue100CompletionToken": "Shop Item Value 100",
-            "APShopTokenValue2CompletionToken": "Shop Item Value 2",
-            "APShopTokenValue20CompletionToken": "Shop Item Value 20",
-            "APShopTokenValue200CompletionToken": "Shop Item Value 200",
-            "APShopTokenValue3CompletionToken": "Shop Item Value 3",
-            "APShopTokenValue30CompletionToken": "Shop Item Value 30",
-            "APShopTokenValue300CompletionToken": "Shop Item Value 300",
-            "APShopTokenValue4CompletionToken": "Shop Item Value 4",
-            "APShopTokenValue40CompletionToken": "Shop Item Value 40",
-            "APShopTokenValue400CompletionToken": "Shop Item Value 400",
-            "APShopTokenValue5CompletionToken": "Shop Item Value 5",
-            "APShopTokenValue50CompletionToken": "Shop Item Value 50",
-            "APShopTokenValue500CompletionToken": "Shop Item Value 500",
+            # Progressive Shop Stock checks (mod tokens stay same, only Python mapping changes)
+            "APShopTokenValue1CompletionToken": "Innkeeper Shop Item Value 1",
+            "APShopTokenValue10CompletionToken": "Innkeeper Shop Item Value 10", 
+            "APShopTokenValue100CompletionToken": "Innkeeper Shop Item Value 100",
+            "APShopTokenValue2CompletionToken": "Innkeeper Shop Item Value 2",
+            "APShopTokenValue20CompletionToken": "Innkeeper Shop Item Value 20",
+            "APShopTokenValue200CompletionToken": "Innkeeper Shop Item Value 200",
+            "APShopTokenValue3CompletionToken": "Innkeeper Shop Item Value 3",
+            "APShopTokenValue30CompletionToken": "Innkeeper Shop Item Value 30",
+            "APShopTokenValue300CompletionToken": "Innkeeper Shop Item Value 300",
+            "APShopTokenValue4CompletionToken": "Innkeeper Shop Item Value 4",
+            "APShopTokenValue40CompletionToken": "Innkeeper Shop Item Value 40",
+            "APShopTokenValue400CompletionToken": "Innkeeper Shop Item Value 400",
+            "APShopTokenValue5CompletionToken": "Innkeeper Shop Item Value 5",
+            "APShopTokenValue50CompletionToken": "Innkeeper Shop Item Value 50",
+            "APShopTokenValue500CompletionToken": "Innkeeper Shop Item Value 500",
             # Main Quest checks
             "Deliver the Amulet": "Deliver the Amulet",
             "Breaking the Siege of Kvatch: Gate Closed": "Breaking the Siege of Kvatch: Gate Closed",
@@ -1200,6 +1649,15 @@ class OblivionContext(CommonContext):
         self.bridge_processed_items = {}
         self.victory_sent = False
         self.regions_completed_sent = set()
+        
+        # Deathlink state
+        self.deathlink_enabled = False
+        self.deathlink_pending = False
+        self.last_death_sent = 0
+
+        # Trap state: track which indices in items_received have already been
+        # written to _traps.txt so we never fire the same trap twice.
+        self.sent_trap_indices: Set[int] = set()
 
         
         # Progressive item tracking
@@ -1207,6 +1665,8 @@ class OblivionContext(CommonContext):
             "Progressive Arena Rank": 0,
             "Progressive Shop Stock": 0,
             "Progressive Armor Set": 0,
+            "Progressive Nirnroot Satchel": 0,
+            "Progressive Septim Satchel": 0,
             **{f"Progressive {class_name} Level": 0
                for class_name in [
                    "Acrobat", "Agent", "Archer", "Assassin", "Barbarian", "Bard", "Battlemage",
@@ -1233,11 +1693,23 @@ class OblivionContext(CommonContext):
                 ["APShopCheckValue5", "APShopCheckValue50", "APShopCheckValue500"]    # Set 5
             ],
             "Progressive Armor Set": [
-                ["APArmorTier1"],   # Tier 1 (Leather/Steel)
-                ["APArmorTier2"],   # Tier 2 (Chainmail/Dwarven)
-                ["APArmorTier3"]    # Tier 3 (Mithril/Orcish)
-                # ["APArmorTier4"],   # Tier 4 (Elven/Ebony)
-                # ["APArmorTier5"]    # Tier 5 (Glass/Daedric)
+                ["APArmorTier2"],   # Tier 2 (Chainmail/Dwarven) - 1st Progressive Armor Set (early placement)
+                ["APArmorTier4"],   # Tier 4 (Elven/Ebony) - 2nd Progressive Armor Set
+                ["APArmorTier5"]    # Tier 5 (Glass/Daedric) - 3rd Progressive Armor Set
+            ],
+            "Progressive Nirnroot Satchel": [
+                "APNirnrootSatchel1",  # Capacity 5
+                "APNirnrootSatchel2",  # Capacity 15
+                "APNirnrootSatchel3",  # Capacity 30
+                "APNirnrootSatchel4",  # Capacity 50
+                "APNirnrootSatchel5"   # Capacity 100
+            ],
+            "Progressive Septim Satchel": [
+                "APSeptimSatchel1",  # Capacity 2500
+                "APSeptimSatchel2",  # Capacity 5000
+                "APSeptimSatchel3",  # Capacity 10000
+                "APSeptimSatchel4",  # Capacity 25000
+                "APSeptimSatchel5"   # Capacity Unlimited
             ],
             # Progressive Class Level items
             **{f"Progressive {class_name} Level": [f"APClassLevel{i}" for i in range(1, 21)]
@@ -1249,7 +1721,10 @@ class OblivionContext(CommonContext):
     }
         
         # Ensure save directory exists
-        os.makedirs(self.oblivion_save_path, exist_ok=True)
+        try:
+            os.makedirs(self.oblivion_save_path, exist_ok=True)
+        except Exception:
+            pass  # Failure reported to UI in the Connected handler
         
         # Initialize tracker
         self.tracker_enabled = True
@@ -1261,6 +1736,15 @@ class OblivionContext(CommonContext):
         await self.get_username()
         await self.send_connect()
         
+    def on_deathlink(self, data: dict):
+        """Handle incoming deathlink from another player."""
+        try:
+            super().on_deathlink(data)
+            self.deathlink_pending = True
+            asyncio.create_task(self._send_deathlink_to_mod())
+        except Exception as e:
+            logger.error(f"[DeathLink] Error in on_deathlink: {e}", exc_info=True)
+    
     def on_package(self, cmd: str, args: dict):
         """Handle incoming server packages."""
         if cmd == "Connected":
@@ -1278,6 +1762,17 @@ class OblivionContext(CommonContext):
             if progressive_class_level_item_name:
                 self.progressive_states[progressive_class_level_item_name] = 0
             
+            # Enable deathlink if option is set
+            if self.slot_data.get("death_link", False):
+                logger.info("[DeathLink] Enabling deathlink for this session")
+                # Add DeathLink tag directly and send ConnectUpdate
+                old_tags = self.tags.copy()
+                self.tags.add("DeathLink")
+                self.deathlink_enabled = True
+                # Send ConnectUpdate if tags changed and we're connected
+                if old_tags != self.tags and self.server and not self.server.socket.closed:
+                    asyncio.create_task(self.send_msgs([{"cmd": "ConnectUpdate", "tags": self.tags}]))
+            
             # Initialize tracker after slot_data is available
             self.tracker = OblivionTracker(self)
             
@@ -1290,9 +1785,25 @@ class OblivionContext(CommonContext):
             # Display available item groups for hinting
             self._display_item_groups()
             
+            # Display path override message if one was loaded
+            if hasattr(self, '_path_override_message') and self._path_override_message:
+                logger.info(self._path_override_message)
+            
             # Display path detection message if Linux
             if hasattr(self, '_path_detection_message'):
                 logger.info(self._path_detection_message)
+
+            # Check that we can actually write to the save directory
+            try:
+                os.makedirs(self.oblivion_save_path, exist_ok=True)
+                test_file = os.path.join(self.oblivion_save_path, ".ap_write_test")
+                with open(test_file, "w") as f:
+                    f.write("test")
+                os.remove(test_file)
+            except Exception as e:
+                logger.error(f"[Oblivion] Cannot write to save directory: {self.oblivion_save_path}")
+                logger.error(f"[Oblivion] Error: {e}")
+                logger.error("[Oblivion] The mod will not receive items. Try running as Administrator or use /set_save_path to choose a different location.")
         elif cmd == "ReceivedItems":
             asyncio.create_task(self._send_items_to_oblivion())
             # Update tracker with new items
@@ -1471,12 +1982,14 @@ class OblivionContext(CommonContext):
             from worlds.oblivion.Items import item_name_groups
             
             logger.info("==========================================")
-            logger.info("Available Item Groups for Hinting:")
+            logger.info("Available Item Groups:")
             
-            for group_name in sorted(item_name_groups.keys()):
-                logger.info(f"  - {group_name}")
-
-            logger.info("Use '!hint <group name>' to get hints")
+            # Format groups in a compact comma-separated list with better spacing
+            group_names = sorted(item_name_groups.keys())
+            groups_text = ",  ".join(group_names)
+            logger.info(groups_text)
+            logger.info("")
+            logger.info("Use '!hint <group name>' to get a hint for the next logical item in that group.")
             logger.info("==========================================")
         except Exception as e:
             logger.warning(f"Could not load item groups: {e}")
@@ -1511,6 +2024,33 @@ class OblivionContext(CommonContext):
         safe_auth = get_file_safe_name(self.auth)
         session_short = self.session_id[:8] if self.session_id else "nosession"
         self.file_prefix = f"AP_{safe_auth}_{session_short}"
+        self._load_sent_trap_indices()
+
+    def _load_sent_trap_indices(self):
+        if not self.file_prefix:
+            return
+        path = os.path.join(self.oblivion_save_path, f"{self.file_prefix}_traps_sent.txt")
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.isdigit():
+                        self.sent_trap_indices.add(int(line))
+        except Exception as e:
+            logger.error(f"Error loading trap sent indices: {e}")
+
+    def _save_sent_trap_indices(self):
+        if not self.file_prefix:
+            return
+        path = os.path.join(self.oblivion_save_path, f"{self.file_prefix}_traps_sent.txt")
+        try:
+            with open(path, "w") as f:
+                for idx in sorted(self.sent_trap_indices):
+                    f.write(f"{idx}\n")
+        except Exception as e:
+            logger.error(f"Error saving trap sent indices: {e}")
     
     def _load_progressive_states(self):
         """Load progressive item states from file."""
@@ -1677,6 +2217,19 @@ class OblivionContext(CommonContext):
                 elif goal == "dungeon_delver":
                     regions_required = len(self.slot_data.get("selected_regions", []) or [])
                     f.write(f"goal_required={regions_required}\n")
+                elif goal == "nirnsanity":
+                    nirnroot_count = int(self.slot_data.get("nirnroot_count", 50))
+                    f.write(f"goal_required={nirnroot_count}\n")
+                elif goal == "treasure_hunter":
+                    gold_goal = int(self.slot_data.get("gold_goal", 10000))
+                    f.write(f"goal_required={gold_goal}\n")
+
+                # For non-nirnsanity goals, write nirnroot_count separately if > 0
+                # (nirnsanity uses goal_required for this; other goals need a separate field)
+                if goal != "nirnsanity":
+                    nirnroot_count = int(self.slot_data.get("nirnroot_count", 0))
+                    if nirnroot_count > 0:
+                        f.write(f"nirnroot_count={nirnroot_count}\n")
 
                 # Write progressive shop stock settings (always enabled)
                 f.write(f"progressive_shop_stock=True\n")
@@ -1733,6 +2286,22 @@ class OblivionContext(CommonContext):
                 dungeon_warp = self.slot_data.get("dungeon_warp", "off")
                 f.write(f"dungeon_warp={dungeon_warp}\n")
 
+                # Write auto-tracking settings
+                auto_tracking = self.slot_data.get("auto_tracking", False)
+                f.write(f"auto_tracking={'True' if bool(auto_tracking) else 'False'}\n")
+                silent_auto_tracking = self.slot_data.get("silent_auto_tracking", False)
+                f.write(f"silent_auto_tracking={'True' if bool(silent_auto_tracking) else 'False'}\n")
+
+                # Write kill check settings (enables kill tracking in the mod when > 0)
+                dungeon_kills = self.slot_data.get("dungeon_kills", 0)
+                overworld_kills = self.slot_data.get("overworld_kills", 0)
+                if dungeon_kills > 0 or overworld_kills > 0:
+                    f.write(f"track_kills=True\n")
+                    f.write(f"dungeon_kills={dungeon_kills}\n")
+                    f.write(f"overworld_kills={overworld_kills}\n")
+                    f.write(f"dungeon_kills_per_region={self.slot_data.get('dungeon_kills_per_region', dungeon_kills)}\n")
+                    f.write(f"overworld_kills_per_region={self.slot_data.get('overworld_kills_per_region', overworld_kills)}\n")
+
                 # Write selected regions and per-region dungeon lists for the mod
                 selected_regions = self.slot_data.get("selected_regions", []) or []
                 dungeons_by_region = self.slot_data.get("dungeons_by_region", {}) or {}
@@ -1752,6 +2321,13 @@ class OblivionContext(CommonContext):
                     for shrine, offerings in shrine_offerings.items():
                         if offerings:
                             f.write(f"offerings_{shrine}={','.join(offerings)}\n")
+                
+                # Write sidequest data
+                selected_sidequests = self.slot_data.get("selected_sidequests", []) or []
+                sidequest_count = self.slot_data.get("sidequest_count", 0)
+                f.write(f"sidequest_count={sidequest_count}\n")
+                if selected_sidequests:
+                    f.write(f"selected_sidequests={','.join(selected_sidequests)}\n")
                     
         except Exception as e:
             logger.error(f"Error writing settings: {e}")
@@ -1801,19 +2377,35 @@ class OblivionContext(CommonContext):
             except Exception as e:
                 logger.error(f"Error reading queue file: {e}")
         
-        # Build list of items that need to be sent
-        from worlds.oblivion.Items import item_table
+        # Build list of items that need to be sent, separating traps from regular items
+        from worlds.oblivion.Items import item_table, trap_code_map
+        from BaseClasses import ItemClassification
         received_items = []
-        for network_item in self.items_received:
+        # (index_in_items_received, trap_code) pairs for pending traps
+        pending_traps: List[tuple] = []
+
+        for idx, network_item in enumerate(self.items_received):
             # Look up item name by ID
             item_name = None
             for name, data in item_table.items():
                 if data.id == network_item.item:
                     item_name = name
                     break
-            if item_name:
+            if not item_name:
+                continue
+            # Traps are routed separately, never to _items.txt
+            if item_table[item_name].classification == ItemClassification.trap:
+                if idx not in self.sent_trap_indices:
+                    trap_code = trap_code_map.get(item_name)
+                    if trap_code:
+                        pending_traps.append((idx, trap_code))
+            else:
                 received_items.append(item_name)
-        
+
+        # Fire any new traps before processing regular items
+        if pending_traps:
+            self._send_traps_to_oblivion(pending_traps)
+
         # Separate progressive items from regular items
         progressive_items = []
         regular_items = []
@@ -1876,6 +2468,50 @@ class OblivionContext(CommonContext):
         except Exception as e:
             logger.error(f"Error adding items to queue: {e}")
 
+    def _send_traps_to_oblivion(self, pending_traps: List[tuple]):
+        """Write pending trap codes to the _traps.txt file for the mod to process.
+
+        Each entry in pending_traps is a (items_received_index, trap_code) pair.
+        Traps are appended to the file one code per line.  The mod reads the file,
+        executes each trap, then deletes it.  sent_trap_indices (in-memory) prevents
+        duplicate fires within a session.
+        """
+        if not self.file_prefix or not pending_traps:
+            return
+        traps_path = os.path.join(self.oblivion_save_path, f"{self.file_prefix}_traps.txt")
+        try:
+            with open(traps_path, "a") as f:
+                for idx, trap_code in pending_traps:
+                    f.write(f"{trap_code}\n")
+                    self.sent_trap_indices.add(idx)
+            self._save_sent_trap_indices()
+        except Exception as e:
+            logger.error(f"Error writing trap file: {e}")
+
+    async def _send_deathlink_to_mod(self):
+        """Send deathlink notification to the mod via a signal file."""
+        if not self.file_prefix:
+            logger.warning("[DeathLink] Cannot send to mod: file_prefix not set")
+            if not self._load_connection_info():
+                logger.error("[DeathLink] Failed to load connection info")
+                return
+        
+        if not self.deathlink_pending:
+            logger.debug("[DeathLink] No pending deathlink to send")
+            return
+            
+        try:
+            # Create a blank signal file that the mod will detect and delete
+            deathlink_path = os.path.join(self.oblivion_save_path, f"{self.file_prefix}_deathlink.txt")
+            
+            with open(deathlink_path, "w") as f:
+                f.write("")  # Blank file
+            
+            self.deathlink_pending = False
+            
+        except Exception as e:
+            logger.error(f"Error sending deathlink to mod: {e}")
+
     async def _wait_for_connection_data(self):
         """Wait for missing_locations to be populated (indicates full connection)."""
         max_wait = 10
@@ -1917,9 +2553,8 @@ class OblivionContext(CommonContext):
             with open(completion_path, "r") as f:
                 completed_items = [line.strip() for line in f.readlines() if line.strip()]
             
-            # Build location ID lookup table
-            from worlds.oblivion.Locations import location_table
-            name_to_id_map = {name: data.id for name, data in location_table.items()}
+            # Build location ID lookup table from pre-defined locations
+            name_to_id_map = {name: data.id for name, data in Locations.location_table.items()}
             
             # Get configuration values for processing
             dungeons_selected_count = self.slot_data.get("dungeons_selected", 0)
@@ -1929,7 +2564,7 @@ class OblivionContext(CommonContext):
             
             # Find the starting gate number
             next_gate_num = 1
-            for i in range(1, 11):  # Up to 10 gates
+            for i in range(1, 21):  # Up to 20 gates
                 location_name = f"Gate {i} Closed"
                 if location_name in name_to_id_map:
                     location_id = name_to_id_map[location_name]
@@ -2033,46 +2668,99 @@ class OblivionContext(CommonContext):
                         await self.send_msgs([{ "cmd": "StatusUpdate", "status": ClientStatus.CLIENT_GOAL }])
                         self.victory_sent = True
                         
-                # [DISABLED_STONES] Ignore Wayshrine/Runestone/Doomstone completions while disabled
-                # elif item == "Wayshrine Visited":
-                #     location_name = "Visit a Wayshrine"
-                #     if location_name in name_to_id_map:
-                #         location_id = name_to_id_map[location_name]
-                #         if location_id in self.missing_locations and location_id not in new_locations:
-                #             new_locations.append(location_id)
-                #     else:
-                #         logger.error(f"Location '{location_name}' not found in location table")
-                # 
-                # elif item == "Runestone Visited":
-                #     location_name = "Visit a Runestone"
-                #     if location_name in name_to_id_map:
-                #         location_id = name_to_id_map[location_name]
-                #         if location_id in self.missing_locations and location_id not in new_locations:
-                #             new_locations.append(location_id)
-                #     else:
-                #         logger.error(f"Location '{location_name}' not found in location table")
-                # 
-                # elif item == "Doomstone Visited":
-                #     location_name = "Visit a Doomstone"
-                #     if location_name in name_to_id_map:
-                #         location_id = name_to_id_map[location_name]
-                #         if location_id in self.missing_locations and location_id not in new_locations:
-                #             new_locations.append(location_id)
-                #     else:
-                #         logger.error(f"Location '{location_name}' not found in location table")
+                # Check if this is a Deathlink
+                elif item == "Deathlink":
+                    if self.deathlink_enabled:
+                        # Only send deathlink if we haven't sent one recently
+                        current_time = time.time()
+                        if current_time - self.last_death_sent > 3.0:  # 3 second cooldown
+                            await self.send_death("The Adventurer of Cyrodiil has fallen.")
+                            self.last_death_sent = current_time
+                
+                # Check if this is a Nirnroot Harvested event
+                elif item == "Nirnroot Harvested":
+                    nirnroot_count = self.slot_data.get("nirnroot_count", 100)
+                    
+                    # Find the first unchecked Nirnroot location
+                    for nirnroot_num in range(1, nirnroot_count + 1):
+                        location_name = f"Nirnroot {nirnroot_num} Harvested"
+                        if location_name in name_to_id_map:
+                            location_id = name_to_id_map[location_name]
+                            if location_id in self.missing_locations and location_id not in new_locations:
+                                new_locations.append(location_id)
+                                break  # Only send one check per harvest event
+
+                # Kill location events
+                elif item in ("Dungeon Kill", "Overworld Kill"):
+                    kill_type = "dungeon" if item == "Dungeon Kill" else "overworld"
+                    total_kills = self.slot_data.get(f"{kill_type}_kills", 0)
+                    if total_kills == 0:
+                        continue
+
+                    # Find the next missing kill location and check it is in logic
+                    for kill_num in range(1, total_kills + 1):
+                        location_name = f"{'Dungeon' if kill_type == 'dungeon' else 'Overworld'} Kill {kill_num}"
+                        if location_name in name_to_id_map:
+                            location_id = name_to_id_map[location_name]
+                            if location_id in self.missing_locations and location_id not in new_locations:
+                                # Silently skip if out of logic (mirrors skill increase cap pattern)
+                                is_accessible = False
+                                try:
+                                    if self.tracker:
+                                        is_accessible = self.tracker.check_location_accessibility(location_name)
+                                except Exception:
+                                    is_accessible = True
+                                if not is_accessible:
+                                    logger.debug(f"{location_name} is out of logic (insufficient region access), skipping kill")
+                                    break  # Higher-numbered kills are also out of logic
+                                new_locations.append(location_id)
+                                break
+                
+                # Check if this is a specific gold threshold event (for Treasure Hunter goal)
+                elif item.endswith(" Gold Collected"):
+                    try:
+                        # Extract the amount from the item name
+                        amount_str = item.replace(" Gold Collected", "")
+                        amount = int(amount_str)
                         
-                # Check if this is an Ayleid Well Visited completion
+                        # Map to location name format
+                        location_name = f"Gold: {amount} Collected"
+                        if location_name in name_to_id_map:
+                            location_id = name_to_id_map[location_name]
+                            if location_id in self.missing_locations and location_id not in new_locations:
+                                new_locations.append(location_id)
+                    except (ValueError, AttributeError):
+                        # Invalid format, skip
+                        pass
+                        
+
+
+                        
+                # Check if this is an Ayleid Well Visited completion (now a sidequest)
                 elif item == "Ayleid Well Visited":
                     location_name = "Visit an Ayleid Well"
+                    # Check if this sidequest is in the selected sidequests
+                    if location_name in self.slot_data.get("selected_sidequests", []):
+                        if location_name in name_to_id_map:
+                            location_id = name_to_id_map[location_name]
+                            if location_id in self.missing_locations and location_id not in new_locations:
+                                new_locations.append(location_id)
+
+                # Doomstone visits
+                elif item.endswith(" Doomstone Visited"):
+                    stone_prefix = item[:-len(" Doomstone Visited")]
+                    location_name = f"Visit the {stone_prefix} Stone"
                     if location_name in name_to_id_map:
                         location_id = name_to_id_map[location_name]
                         if location_id in self.missing_locations and location_id not in new_locations:
                             new_locations.append(location_id)
-
-                # Birthsign Doomstone visits
-                elif item.endswith(" Doomstone Visited"):
-                    stone_prefix = item[:-len(" Doomstone Visited")]
-                    location_name = f"Visit the {stone_prefix} Stone"
+                    else:
+                        logger.error(f"Location '{location_name}' not found in location table")
+                
+                # Check for sidequest completions
+                elif item in self.slot_data.get("selected_sidequests", []):
+                    # This is a selected sidequest location
+                    location_name = item
                     if location_name in name_to_id_map:
                         location_id = name_to_id_map[location_name]
                         if location_id in self.missing_locations and location_id not in new_locations:
@@ -2148,6 +2836,11 @@ class OblivionContext(CommonContext):
             self.game_loop_task.cancel()
         
         self._cleanup_files()
+        
+        # Clear connection state after cleanup
+        self.slot_data = {}
+        self.session_id = ""
+        
         await super().disconnect(allow_autoreconnect)
     
     async def shutdown(self):

@@ -190,16 +190,34 @@ DOOMSTONE_REGIONS = {
     "Visit the Serpent Stone": "Blackwood",
 }
 
+# Sidequest to region mapping
+# These are gated by region access items when region system is enabled.
+SIDEQUEST_REGIONS = {
+    # Exploration sidequests
+    "Obtain Fin Gleam": "Gold Coast",
+    "Visit Dive Rock": "Jerall Mountains",
+    "Obtain Bands of Kwang Lao": "Heartlands",
+    # Wealth sidequests
+    "Acquire Akaviri Sunderblade": "Heartlands",
+    "Acquire Captain Kordan's Saber": "Nibenay Valley",
+    "Acquire Battleaxe of Hatred": "Heartlands",
+    "Acquire Akavari Warblade": "Heartlands",
+    "Acquire Truncheon of Submission": "Gold Coast",
+    "Acquire Destarine's Cleaver": "Blackwood",
+    "Acquire Bow of Infliction": "Nibenay Basin",
+    "Acquire Aegis of the Apocalypse": "Heartlands",
+    "Acquire Helm of the Deep Diver": "Heartlands",
+    "Acquire Monkeypants": "Jerall Mountains",
+}
+
 # Base location ID
 BASE_LOCATION_ID = 4100000
 
 # Location names corresponding to completion tokens that are generated when shrines are completed
 location_names = [
-    # [DISABLED_STONES] Wayshrine/Runestone/Doomstone disabled - debating if i want this
+    # [DISABLED_STONES] Wayshrine/Runestone/Doomstone disabled
     # "Visit a Wayshrine",
     # "Visit a Runestone",
-    # "Visit a Doomstone", 
-    "Visit an Ayleid Well",
     # Birthsign Doomstones (per-region)
     "Visit the Tower Stone",
     "Visit the Steed Stone",
@@ -262,6 +280,16 @@ location_names = [
     "Gate 8 Closed",
     "Gate 9 Closed",
     "Gate 10 Closed",
+    "Gate 11 Closed",
+    "Gate 12 Closed",
+    "Gate 13 Closed",
+    "Gate 14 Closed",
+    "Gate 15 Closed",
+    "Gate 16 Closed",
+    "Gate 17 Closed",
+    "Gate 18 Closed",
+    "Gate 19 Closed",
+    "Gate 20 Closed",
 ]
 
 # Add dungeon locations to the main list (IDs) - logic will gate access via region items
@@ -277,37 +305,35 @@ for i, location_name in enumerate(location_names):
 # Add shop item locations (progressive shop stock system - always on)
 shop_item_locations = [
     # Set 1 (always available)
-    "Shop Item Value 1",
-    "Shop Item Value 10", 
-    "Shop Item Value 100",
+    "Innkeeper Shop Item Value 1",
+    "Innkeeper Shop Item Value 10", 
+    "Innkeeper Shop Item Value 100",
     # Set 2 (Progressive Shop Stock 1)
-    "Shop Item Value 2",
-    "Shop Item Value 20",
-    "Shop Item Value 200",
+    "Innkeeper Shop Item Value 2",
+    "Innkeeper Shop Item Value 20",
+    "Innkeeper Shop Item Value 200",
     # Set 3 (Progressive Shop Stock 2)
-    "Shop Item Value 3",
-    "Shop Item Value 30",
-    "Shop Item Value 300",
+    "Innkeeper Shop Item Value 3",
+    "Innkeeper Shop Item Value 30",
+    "Innkeeper Shop Item Value 300",
     # Set 4 (Progressive Shop Stock 3)
-    "Shop Item Value 4",
-    "Shop Item Value 40",
-    "Shop Item Value 400",
+    "Innkeeper Shop Item Value 4",
+    "Innkeeper Shop Item Value 40",
+    "Innkeeper Shop Item Value 400",
     # Set 5 (Progressive Shop Stock 4)
-    "Shop Item Value 5",
-    "Shop Item Value 50",
-    "Shop Item Value 500",
+    "Innkeeper Shop Item Value 5",
+    "Innkeeper Shop Item Value 50",
+    "Innkeeper Shop Item Value 500",
 ]
 
 for i, shop_location in enumerate(shop_item_locations, start=len(location_names)):
     location_table[shop_location] = LocationData(BASE_LOCATION_ID + i, "Cyrodiil") 
 
-# Add class skill locations dynamically
+# Class skill locations (for class system - up to 40 increases per skill, 21 skills total)
 def generate_class_skill_locations() -> Dict[str, LocationData]:
-    """Generate all possible class skill locations dynamically"""
     locations = {}
     location_id = BASE_LOCATION_ID + len(location_names) + len(shop_item_locations)
     
-    # Generate locations for all 21 skills, up to 40 skill increases each (20 levels * 2 per level)
     all_skills = [
         "Acrobatics", "Alchemy", "Alteration", "Armorer", "Athletics", "Blade", "Block", 
         "Blunt", "Conjuration", "Destruction", "Hand-to-Hand", "Heavy Armor", "Illusion", 
@@ -323,21 +349,57 @@ def generate_class_skill_locations() -> Dict[str, LocationData]:
     
     return locations
 
-# Add class skill locations to the table
 class_skill_locations = generate_class_skill_locations()
 location_table.update(class_skill_locations)
 
-# Add event & victory locations (used for playthrough generation)
+# Nirnroot locations (up to 100 harvesting checks)
+# World generation adds only the subset needed based on nirnroot_count setting
+def generate_nirnroot_locations() -> Dict[str, LocationData]:
+    locations = {}
+    location_id = BASE_LOCATION_ID + len(location_names) + len(shop_item_locations) + len(class_skill_locations)
+    
+    for nirnroot_num in range(1, 101):  # 1-100
+        location_name = f"Nirnroot {nirnroot_num} Harvested"
+        locations[location_name] = LocationData(location_id, "Cyrodiil")
+        location_id += 1
+    
+    return locations
+
+nirnroot_locations = generate_nirnroot_locations()
+location_table.update(nirnroot_locations)
+
+# Gold threshold locations (for Treasure Hunter goal)
+# World generation adds only thresholds <= gold_goal setting
+# Base thresholds up to 10k, then 10k increments for higher goals
+gold_base_id = BASE_LOCATION_ID + len(location_names) + len(shop_item_locations) + len(class_skill_locations) + len(nirnroot_locations)
+location_table["Gold: 500 Collected"] = LocationData(gold_base_id, "Cyrodiil")
+location_table["Gold: 1000 Collected"] = LocationData(gold_base_id + 1, "Cyrodiil")
+location_table["Gold: 2500 Collected"] = LocationData(gold_base_id + 2, "Cyrodiil")
+location_table["Gold: 5000 Collected"] = LocationData(gold_base_id + 3, "Cyrodiil")
+location_table["Gold: 7500 Collected"] = LocationData(gold_base_id + 4, "Cyrodiil")
+location_table["Gold: 10000 Collected"] = LocationData(gold_base_id + 5, "Cyrodiil")
+location_table["Gold: 20000 Collected"] = LocationData(gold_base_id + 6, "Cyrodiil")
+location_table["Gold: 30000 Collected"] = LocationData(gold_base_id + 7, "Cyrodiil")
+location_table["Gold: 40000 Collected"] = LocationData(gold_base_id + 8, "Cyrodiil")
+location_table["Gold: 50000 Collected"] = LocationData(gold_base_id + 9, "Cyrodiil")
+location_table["Gold: 60000 Collected"] = LocationData(gold_base_id + 10, "Cyrodiil")
+location_table["Gold: 70000 Collected"] = LocationData(gold_base_id + 11, "Cyrodiil")
+location_table["Gold: 80000 Collected"] = LocationData(gold_base_id + 12, "Cyrodiil")
+location_table["Gold: 90000 Collected"] = LocationData(gold_base_id + 13, "Cyrodiil")
+location_table["Gold: 100000 Collected"] = LocationData(gold_base_id + 14, "Cyrodiil")
+
+# Event & victory locations (used for playthrough generation)
 location_table["Shrine Seeker"] = LocationData(EventId, "Cyrodiil")
 location_table["Gatecloser"] = LocationData(EventId, "Cyrodiil")
 location_table["Arena Grand Champion"] = LocationData(EventId, "Cyrodiil") 
 location_table["Dungeon Delver"] = LocationData(EventId, "Cyrodiil")
 location_table["Light the Dragonfires"] = LocationData(EventId, "Cyrodiil")
+location_table["Nirnsanity"] = LocationData(EventId, "Cyrodiil")
+location_table["Treasure Hunter"] = LocationData(EventId, "Cyrodiil")
 location_table["Weynon Priory Quest Complete"] = LocationData(EventId, "Cyrodiil")
 location_table["Paradise Complete"] = LocationData(EventId, "Cyrodiil")
 
-# ===== MAIN QUEST LOCATIONS =====
-# Organized by chapter: checks up to Weynon Priory, checks from MQ05 to pre-Paradise, and Paradise to victory.
+# Main Quest locations (organized by chapter)
 
 # Chapter 1: Tutorial through Weynon Priory (MQ01-MQ04)
 mq_chapter_1_locations = [
@@ -396,3 +458,73 @@ mq_chapter_3_locations = [
 for loc in mq_chapter_3_locations:
     if loc not in location_table:
         location_table[loc] = LocationData(BASE_LOCATION_ID + len(location_table), "Cyrodiil")
+
+# Sidequest locations (pool for random selection based on SidequestCount option)
+
+# Categorized sidequest pools
+WEALTH_SIDEQUESTS = [
+    "Acquire Akaviri Sunderblade",
+    "Acquire Captain Kordan's Saber",
+    "Acquire Battleaxe of Hatred",
+    "Acquire Akavari Warblade",
+    "Acquire Truncheon of Submission",
+    "Acquire Destarine's Cleaver",
+    "Acquire Bow of Infliction",
+    "Acquire Aegis of the Apocalypse",
+    "Acquire Helm of the Deep Diver",
+    "Acquire Monkeypants",
+]
+
+EXPLORATION_SIDEQUESTS = [
+    "Obtain a Varla Stone",
+    "Obtain Fin Gleam",
+    "Visit Dive Rock",
+    "Obtain Bands of Kwang Lao",
+    "Visit an Ayleid Well",
+]
+
+# Register all sidequest locations in location_table
+sidequest_base_id = BASE_LOCATION_ID + len(location_table)
+all_sidequests = WEALTH_SIDEQUESTS + EXPLORATION_SIDEQUESTS
+for i, sidequest_name in enumerate(all_sidequests):
+    location_table[sidequest_name] = LocationData(sidequest_base_id + i, "Cyrodiil")
+
+# Sidequest metadata (gold costs and locations for reference)
+SIDEQUEST_METADATA = {
+    # Wealth sidequests - gold cost
+    "Acquire Akaviri Sunderblade": 5000,  # Imperial Market
+    "Acquire Captain Kordan's Saber": 6840,  # Cheydinhal
+    "Acquire Battleaxe of Hatred": 15000,  # Imperial Market
+    "Acquire Akavari Warblade": 5600,  # Imperial Market
+    "Acquire Truncheon of Submission": 5500,  # Anvil
+    "Acquire Destarine's Cleaver": 6400,  # Leyawiin
+    "Acquire Bow of Infliction": 9100,  # Bravil
+    "Acquire Aegis of the Apocalypse": 12000,  # Imperial Market
+    "Acquire Helm of the Deep Diver": 8700,  # Imperial Market
+    "Acquire Monkeypants": 3600,  # Suurootan at Novaroma, Bruma
+    # Exploration sidequests - no gold cost
+    "Obtain a Varla Stone": 0,
+    "Obtain Fin Gleam": 0,
+    "Visit Dive Rock": 0,
+    "Obtain Bands of Kwang Lao": 0,
+    "Visit an Ayleid Well": 0,
+}
+
+# Combined sidequest pool (all sidequests available)
+SIDEQUEST_POOL = WEALTH_SIDEQUESTS + EXPLORATION_SIDEQUESTS
+
+# Kill check location pool
+# Logic gates each batch by region unlock count
+def generate_kill_locations() -> Dict[str, LocationData]:
+    locations: Dict[str, LocationData] = {}
+    location_id = BASE_LOCATION_ID + len(location_table)
+    for i in range(1, 101):
+        locations[f"Dungeon Kill {i}"] = LocationData(location_id, "Cyrodiil")
+        location_id += 1
+    for i in range(1, 101):
+        locations[f"Overworld Kill {i}"] = LocationData(location_id, "Cyrodiil")
+        location_id += 1
+    return locations
+
+kill_locations = generate_kill_locations()
+location_table.update(kill_locations)

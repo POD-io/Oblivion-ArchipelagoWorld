@@ -1,5 +1,6 @@
 from BaseClasses import MultiWorld
 from typing import List
+import math
 
 def set_rules(multiworld: MultiWorld, player: int) -> None:
     """
@@ -76,28 +77,11 @@ def set_rules(multiworld: MultiWorld, player: int) -> None:
     
     for values, required_count in shop_sets:
         for value in values:
-            location_name = f"Shop Item Value {value}"
+            location_name = f"Innkeeper Shop Item Value {value}"
             location = multiworld.get_location(location_name, player)
             location.access_rule = lambda state, count=required_count: state.has("Progressive Shop Stock", player, count)
     
-    # [DISABLED_STONES] Wayshrine/Runestone/Doomstone rules disabled - debating if i want this
-    # # ===== WAYSHRINE RULES =====
-    # wayshrine_location = multiworld.get_location("Visit a Wayshrine", player)
-    # wayshrine_location.access_rule = lambda state: True
-    # 
-    # # ===== RUNESTONE RULES =====
-    # runestone_location = multiworld.get_location("Visit a Runestone", player)
-    # runestone_location.access_rule = lambda state: True
-    # 
-    # # ===== DOOMSTONE RULES =====
-    # doomstone_location = multiworld.get_location("Visit a Doomstone", player)
-    # doomstone_location.access_rule = lambda state: True
-    
-    # ===== AYLEID WELL RULES =====
-    # Ayleid Well location is always accessible
-    ayleid_well_location = multiworld.get_location("Visit an Ayleid Well", player)
-    ayleid_well_location.access_rule = lambda state: True
-    
+
     # ===== CLASS SKILL RULES =====
     # Class skill locations require Progressive Class Level items
     if world.selected_class is not None:
@@ -397,3 +381,158 @@ def set_rules(multiworld: MultiWorld, player: int) -> None:
         else:
             # Otherwise gated by region access item
             location.access_rule = (lambda state, item_name=access_item: state.has(item_name, player))
+    
+    # NIRNSANITY RULES - Nirnroot harvesting gated by Progressive Nirnroot Satchel capacity
+    if world.options.goal.current_key == "nirnsanity":
+        nirnroot_count = world.options.nirnroot_count.value
+        # Capacity progression: Start=1, 1st satchel=5, 2nd=15, 3rd=30, 4th=50, 5th=100
+        # Each harvesting location requires enough satchels to have capacity for that number
+        
+        for nirnroot_num in range(1, nirnroot_count + 1):
+            location_name = f"Nirnroot {nirnroot_num} Harvested"
+            try:
+                location = multiworld.get_location(location_name, player)
+                
+                # Determine required satchel count based on capacity needed
+                if nirnroot_num <= 1:
+                    # First Nirnroot is within starting capacity
+                    location.access_rule = lambda state: True
+                elif nirnroot_num <= 5:
+                    # Need 1 satchel for capacity 5
+                    location.access_rule = lambda state: state.has("Progressive Nirnroot Satchel", player, 1)
+                elif nirnroot_num <= 15:
+                    # Need 2 satchels for capacity 15
+                    location.access_rule = lambda state: state.has("Progressive Nirnroot Satchel", player, 2)
+                elif nirnroot_num <= 30:
+                    # Need 3 satchels for capacity 30
+                    location.access_rule = lambda state: state.has("Progressive Nirnroot Satchel", player, 3)
+                elif nirnroot_num <= 50:
+                    # Need 4 satchels for capacity 50
+                    location.access_rule = lambda state: state.has("Progressive Nirnroot Satchel", player, 4)
+                else:  # 51-100
+                    # Need 5 satchels for capacity 100
+                    location.access_rule = lambda state: state.has("Progressive Nirnroot Satchel", player, 5)
+            except KeyError:
+                continue  # Location not in this seed
+    
+    # NON-NIRNSANITY NIRNROOT CHECKS - No capacity restrictions, all immediately accessible
+    if world.options.goal.current_key != "nirnsanity":
+        nirnroot_count = world.options.nirnroot_count.value
+        if nirnroot_count > 0:
+            for nirnroot_num in range(1, nirnroot_count + 1):
+                location_name = f"Nirnroot {nirnroot_num} Harvested"
+                try:
+                    location = multiworld.get_location(location_name, player)
+                    location.access_rule = lambda state: True
+                except KeyError:
+                    continue  # Location not in this seed
+    
+    # TREASURE HUNTER RULES - Gold collection gated by Progressive Septim Satchel capacity
+    if world.options.goal.current_key == "treasure_hunter":
+        # Capacity progression: Start=1000, 1st=2500, 2nd=5000, 3rd=10000, 4th=25000, 5th=Unlimited
+        # Each capacity threshold location requires enough satchels to have capacity for that amount
+        
+        capacity_rules = [
+            (500, 0),
+            (1000, 0),
+            (2500, 1),
+            (5000, 2),
+            (7500, 2),
+            (10000, 3),
+            (20000, 4),
+            (30000, 5),
+            (40000, 5),
+            (50000, 5),
+            (60000, 5),
+            (70000, 5),
+            (80000, 5),
+            (90000, 5),
+            (100000, 5),
+        ]
+        
+        for threshold, satchels_needed in capacity_rules:
+            location_name = f"Gold: {threshold} Collected"
+            try:
+                location = multiworld.get_location(location_name, player)
+                if satchels_needed == 0:
+                    location.access_rule = lambda state: True
+                else:
+                    location.access_rule = lambda state, count=satchels_needed: state.has("Progressive Septim Satchel", player, count)
+            except KeyError:
+                continue  # Location not in this seed
+    
+    # ===== KILL CHECK RULES =====
+    # Kill locations are gated by region unlock count: kill N requires (N / kills_per_region) regions.
+    # The starting region is always precollected, so the first batch is immediately accessible.
+    # If no regions are configured, all kill locations are immediately accessible.
+    region_access_items = [f"{r} Access" for r in getattr(world, 'selected_regions', [])]
+
+    if world.dungeon_kills > 0:
+        kpr = world.dungeon_kills_per_region
+        for i in range(1, world.dungeon_kills + 1):
+            location_name = f"Dungeon Kill {i}"
+            try:
+                loc = multiworld.get_location(location_name, player)
+                if region_access_items and kpr > 0:
+                    required = math.ceil(i / kpr)
+                    loc.access_rule = lambda state, r=required, items=region_access_items: (
+                        sum(1 for item in items if state.has(item, player)) >= r
+                    )
+                else:
+                    loc.access_rule = lambda state: True
+            except KeyError:
+                continue
+
+    if world.overworld_kills > 0:
+        kpr = world.overworld_kills_per_region
+        for i in range(1, world.overworld_kills + 1):
+            location_name = f"Overworld Kill {i}"
+            try:
+                loc = multiworld.get_location(location_name, player)
+                if region_access_items and kpr > 0:
+                    required = math.ceil(i / kpr)
+                    loc.access_rule = lambda state, r=required, items=region_access_items: (
+                        sum(1 for item in items if state.has(item, player)) >= r
+                    )
+                else:
+                    loc.access_rule = lambda state: True
+            except KeyError:
+                continue
+
+    # ===== SIDEQUEST RULES =====
+    # Sidequest locations require their category's license item
+    if hasattr(world, 'selected_sidequests') and world.selected_sidequests:
+        from .Locations import WEALTH_SIDEQUESTS, EXPLORATION_SIDEQUESTS, SIDEQUEST_REGIONS
+        
+        for sidequest_name in world.selected_sidequests:
+            try:
+                location = multiworld.get_location(sidequest_name, player)
+                
+                # Check if this sidequest also requires a region access item
+                region_name = SIDEQUEST_REGIONS.get(sidequest_name)
+                
+                # Build access rule based on requirements
+                if region_name:
+                    # This sidequest requires both a license AND region access
+                    access_item = f"{region_name} Access"
+                    # Check if region starts unlocked
+                    if region_name in getattr(world, "starting_unlocked_regions", []):
+                        # Region starts unlocked, only need license
+                        if sidequest_name in WEALTH_SIDEQUESTS:
+                            location.access_rule = lambda state: state.has("Wealth Sidequest License", player)
+                        elif sidequest_name in EXPLORATION_SIDEQUESTS:
+                            location.access_rule = lambda state: state.has("Exploration Sidequest License", player)
+                    else:
+                        # Require both license and region access
+                        if sidequest_name in WEALTH_SIDEQUESTS:
+                            location.access_rule = lambda state, item_name=access_item: state.has("Wealth Sidequest License", player) and state.has(item_name, player)
+                        elif sidequest_name in EXPLORATION_SIDEQUESTS:
+                            location.access_rule = lambda state, item_name=access_item: state.has("Exploration Sidequest License", player) and state.has(item_name, player)
+                else:
+                    # No region requirement, only license
+                    if sidequest_name in WEALTH_SIDEQUESTS:
+                        location.access_rule = lambda state: state.has("Wealth Sidequest License", player)
+                    elif sidequest_name in EXPLORATION_SIDEQUESTS:
+                        location.access_rule = lambda state: state.has("Exploration Sidequest License", player)
+            except KeyError:
+                continue  # Location not in this seed
