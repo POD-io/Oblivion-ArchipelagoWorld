@@ -104,7 +104,7 @@ The Archipelago client and Oblivion Remastered mod communicate through shared fi
 
 **Windows:** `C:\Users\<username>\Documents\My Games\Oblivion Remastered\Saved\Archipelago\`
 
-**Linux:** The client auto-detects your Proton prefix by searching common Steam library locations (standard, Flatpak, Snap, and custom mount points). The detected path is displayed when you connect. If auto-detection fails, use `/set_save_path` to manually specify the directory. You can also manually create the path_override.txt file to redirect the mod path.
+**Linux:** The client auto-detects your Proton prefix by searching common Steam library locations (standard, Flatpak, Snap, and custom mount points). The detected path is displayed when you connect. If auto-detection fails, use `/set_save_path` to manually specify the directory. You can also create `path_override.txt` in the default `Saved/Archipelago/` folder (one line with your custom path) to redirect where the client reads and writes Archipelago files.
 
 ### Session Management
 Each Archipelago seed generates a unique session ID, which is used to distinguish separate playthroughs. When the Oblivion client connects, it uses this session ID to create and manage settings and progress tracking for that specific session. 
