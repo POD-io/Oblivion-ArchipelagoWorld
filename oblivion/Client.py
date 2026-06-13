@@ -951,16 +951,17 @@ def _find_proton_save_path():
     import glob
     
     # The unique Proton path signature for Oblivion Remastered (2623190 is the Steam App ID)
-    pattern = "compatdata/2623190/pfx/drive_c/users/steamuser/Documents/My Games/Oblivion Remastered/Saved"
+    pattern = "steamapps/compatdata/2623190/pfx/drive_c/users/steamuser/Documents/My Games/Oblivion Remastered/Saved"
     
     # Search common Steam library locations
     home = os.path.expanduser("~")
     search_roots = [
-        f"{home}/.local/share/Steam/steamapps",           # Standard Steam
-        f"{home}/.var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps",  # Flatpak
-        f"{home}/snap/steam/common/.local/share/Steam/steamapps",  # Snap
-        "/mnt/*/steamapps",
-        "/media/*/steamapps"
+        f"{home}/.local/share/Steam",           # Standard Steam
+        f"{home}/.steam/debian-installation/",  # Standard Debian install
+        f"{home}/.var/app/com.valvesoftware.Steam/.local/share/Steam",  # Flatpak
+        f"{home}/snap/steam/common/.local/share/Steam",  # Snap
+        "/mnt/*",
+        "/media/*"
     ]
     
     for root in search_roots:
