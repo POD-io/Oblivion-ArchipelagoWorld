@@ -1,6 +1,8 @@
 import uuid
+import math
 from worlds.AutoWorld import World, WebWorld
 from BaseClasses import Region, Entrance, Item, ItemClassification, Location
+from Options import OptionError
 from typing import Dict, Any, List
 import logging
 
@@ -17,7 +19,21 @@ from .Items import (
     unique_merchant_categories,
     trap_items,
 )
-from .Locations import location_table, OblivionLocation, EventId, LocationData, DUNGEON_REGIONS, SIDEQUEST_POOL, WEALTH_SIDEQUESTS, EXPLORATION_SIDEQUESTS, SIDEQUEST_METADATA, SIDEQUEST_REGIONS, BASE_LOCATION_ID
+from .Locations import (
+    location_table,
+    OblivionLocation,
+    EventId,
+    LocationData,
+    DUNGEON_REGIONS,
+    SIDEQUEST_POOL,
+    WEALTH_SIDEQUESTS,
+    EXPLORATION_SIDEQUESTS,
+    SIDEQUEST_METADATA,
+    SIDEQUEST_REGIONS,
+    SIDEQUEST_TO_AP_ITEM,
+    GOLD_CAPACITY_THRESHOLDS,
+    BASE_LOCATION_ID,
+)
 from .Rules import set_rules
 from .Options import OblivionOptions, oblivion_option_groups
 from .ShrineProgression import select_active_shrines, get_shrine_offerings
@@ -117,21 +133,18 @@ class OblivionWorld(World):
         # Validate goal/count combinations
         goal = self.options.goal.current_key
         if goal == "shrine_seeker" and self.options.shrine_count.value == 0:
-            raise Exception("Shrine Count cannot be 0 when Goal is Shrine Seeker")
+            raise OptionError("Shrine Count cannot be 0 when Goal is Shrine Seeker")
         if goal == "gatecloser" and self.options.gate_count.value == 0:
-            raise Exception("Gate Count cannot be 0 when Goal is Gatecloser")
+            raise OptionError("Gate Count cannot be 0 when Goal is Gatecloser")
         if goal == "shrine_seeker" and self.options.shrine_goal.value > self.options.shrine_count.value:
-            raise Exception(f"Shrine Goal ({self.options.shrine_goal.value}) cannot be greater than Shrine Count ({self.options.shrine_count.value})")
+            raise OptionError(f"Shrine Goal ({self.options.shrine_goal.value}) cannot be greater than Shrine Count ({self.options.shrine_count.value})")
         if goal == "dungeon_delver":
             if self.options.region_unlocks.value == 0:
-                raise Exception("Region Unlocks cannot be 0 when Goal is Dungeon Delver")
+                raise OptionError("Region Unlocks cannot be 0 when Goal is Dungeon Delver")
             if self.options.dungeons_per_region.value == 0:
-                raise Exception("Dungeons per Region cannot be 0 when Goal is Dungeon Delver")
-        if goal == "treasure_hunter":
-            if self.options.gold_goal.value % 500 != 0:
-                raise Exception(f"Gold Goal ({self.options.gold_goal.value}) must be a multiple of 500")
+                raise OptionError("Dungeons per Region cannot be 0 when Goal is Dungeon Delver")
         if goal == "nirnsanity" and self.options.nirnroot_count.value == 0:
-            raise Exception("Nirnroot Count cannot be 0 when Goal is Nirnsanity. Set it to at least 10.")
+            raise OptionError("Nirnroot Count cannot be 0 when Goal is Nirnsanity. Set it to at least 10.")
         
         # Handle class selection
         passthrough = getattr(self.multiworld, "re_gen_passthrough", None)
@@ -203,8 +216,8 @@ class OblivionWorld(World):
         self.overworld_kills = self.options.overworld_kills.value
         # Determine per-region batch size for kill tracking
         regions_for_kills = self.region_unlocks_count if self.region_unlocks_count > 0 else 1
-        self.dungeon_kills_per_region = self.dungeon_kills // regions_for_kills if self.dungeon_kills > 0 else 0
-        self.overworld_kills_per_region = self.overworld_kills // regions_for_kills if self.overworld_kills > 0 else 0
+        self.dungeon_kills_per_region = math.ceil(self.dungeon_kills / regions_for_kills) if self.dungeon_kills > 0 else 0
+        self.overworld_kills_per_region = math.ceil(self.overworld_kills / regions_for_kills) if self.overworld_kills > 0 else 0
         
         # Set counts based on settings
         # Suppress gate content entirely when Light the Dragonfires is the goal
@@ -423,24 +436,27 @@ class OblivionWorld(World):
             if pt and pt.get("selected_sidequests"):
                 self.selected_sidequests = list(pt["selected_sidequests"])[:total_sidequest_count]
             else:
-                # Filter sidequests by available regions (if using regions)
+                # Filter sidequests by available regions when region system is enabled
                 available_wealth = list(WEALTH_SIDEQUESTS)
                 available_exploration = list(EXPLORATION_SIDEQUESTS)
-                
-                if self.using_region_dungeons and hasattr(self, 'selected_regions'):
-                    # Filter to only include sidequests that either have no region requirement
-                    # or have a region requirement that's in selected_regions
+
+                if self.using_regions and hasattr(self, 'selected_regions'):
+                    # Only include sidequests with no region requirement or in selected regions
                     selected_region_set = set(self.selected_regions)
-                    
+
                     available_wealth = [
                         sq for sq in WEALTH_SIDEQUESTS
                         if sq not in SIDEQUEST_REGIONS or SIDEQUEST_REGIONS[sq] in selected_region_set
                     ]
-                    
+
                     available_exploration = [
                         sq for sq in EXPLORATION_SIDEQUESTS
                         if sq not in SIDEQUEST_REGIONS or SIDEQUEST_REGIONS[sq] in selected_region_set
                     ]
+                elif not self.using_regions:
+                    # No region system: only sidequests that do not require region access
+                    available_wealth = [sq for sq in WEALTH_SIDEQUESTS if sq not in SIDEQUEST_REGIONS]
+                    available_exploration = [sq for sq in EXPLORATION_SIDEQUESTS if sq not in SIDEQUEST_REGIONS]
                 
                 # Select from each category
                 selected = []
@@ -506,8 +522,19 @@ class OblivionWorld(World):
             logger.debug(
                 f"Player {self.player}: Selected {len(self.selected_unique_items)} unique merchant items"
             )
-    
 
+        # Prevent sidequest-linked items from appearing as filler when their check is seeded
+        if getattr(self, 'selected_sidequests', None):
+            blocked_sidequest_items = {
+                SIDEQUEST_TO_AP_ITEM[sq]
+                for sq in self.selected_sidequests
+                if sq in SIDEQUEST_TO_AP_ITEM
+            }
+            if blocked_sidequest_items and getattr(self, 'selected_unique_items', None):
+                self.selected_unique_items = [
+                    item_name for item_name in self.selected_unique_items
+                    if item_name not in blocked_sidequest_items
+                ]
     
     def create_regions(self) -> None:
         menu_region = Region("Menu", self.player, self.multiworld)
@@ -720,11 +747,9 @@ class OblivionWorld(World):
                 victory_location = OblivionLocation(self.player, "Nirnsanity", location_data.id, cyrodiil_region)
                 cyrodiil_region.locations.append(victory_location)
         elif goal == "treasure_hunter":
-            # Treasure Hunter: Add gold capacity threshold locations
+            # Treasure Hunter: gold milestone checks up to gold_goal (like nirnsanity count)
             gold_goal = self.options.gold_goal.value
-            # Base thresholds up to 10k, then 10k increments for higher goals
-            capacity_thresholds = [500, 1000, 2500, 5000, 7500, 10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000]
-            for threshold in capacity_thresholds:
+            for threshold in GOLD_CAPACITY_THRESHOLDS:
                 if threshold <= gold_goal:
                     location_name = f"Gold: {threshold} Collected"
                     if location_name in location_table:
@@ -1048,19 +1073,17 @@ class OblivionWorld(World):
         # Count Nirnroot harvesting checks
         enabled_nirnroot_count = self.options.nirnroot_count.value  # One location per Nirnroot
         
-        # Count Treasure Hunter locations
+        # Count Treasure Hunter gold milestone checks (only thresholds up to gold_goal)
         enabled_gold_count = 0
         if goal == "treasure_hunter":
-            # Count capacity thresholds within the goal
-            capacity_thresholds = [500, 1000, 2500, 5000, 7500, 10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000]
-            enabled_gold_count = sum(1 for threshold in capacity_thresholds if threshold <= self.options.gold_goal.value)
-
+            gold_goal = self.options.gold_goal.value
+            enabled_gold_count = sum(1 for threshold in GOLD_CAPACITY_THRESHOLDS if threshold <= gold_goal)
 
         if self.using_regions:
             selected_regions_set = set(self.selected_regions)
             stone_count = sum(1 for _name, region in getattr(self, '_birthsign_stones', []) if region in selected_regions_set)
         else:
-            stone_count = len(getattr(self, '_birthsign_stones', []))
+            stone_count = 0
         enabled_visit_count = stone_count
 
         # Count MQ milestone locations when MQ goal active
@@ -1089,6 +1112,16 @@ class OblivionWorld(World):
         
         # Filter useful items based on randomized vs vanilla shrines
         filtered_useful_items = list(useful_items)
+
+        # Exclude AP items tied to seeded sidequests (must be purchased/obtained in-game)
+        if hasattr(self, 'selected_sidequests') and self.selected_sidequests:
+            for sidequest_name in self.selected_sidequests:
+                blocked_item = SIDEQUEST_TO_AP_ITEM.get(sidequest_name)
+                if blocked_item:
+                    try:
+                        filtered_useful_items.remove(blocked_item)
+                    except ValueError:
+                        pass
         
         # Add selected unique merchant items to the useful items pool
         if hasattr(self, 'selected_unique_items') and self.selected_unique_items:
@@ -1238,26 +1271,36 @@ class OblivionWorld(World):
                         item_pool.append(self.create_item(trap_name))
 
         useful_items_list = filtered_useful_items
-        filler_list = list(filler_items) 
+        filler_list = list(filler_items)
+        sidequest_blocked_items = {
+            SIDEQUEST_TO_AP_ITEM[sq]
+            for sq in getattr(self, 'selected_sidequests', [])
+            if sq in SIDEQUEST_TO_AP_ITEM
+        }
         useful_percentage = 75  # 75% useful items, 25% filler
         
         for i in range(filler_needed):
-            roll = self.multiworld.random.randint(1, 100)
-            
-            # 75% chance: useful item (if available, unique - one of each)
-            if (roll <= useful_percentage and 
-                useful_items_list and len(useful_items_list) > 0):
-                item_name = self.multiworld.random.choice(useful_items_list)
-                useful_items_list.remove(item_name)
-            # 25% filler
-            else:
-                item_name = self.multiworld.random.choice(filler_list)
-                # Handle special markers
-                if item_name == "Random Potion":
-                    item_name = self.multiworld.random.choice(potion_items)
-                elif item_name == "Random Scroll":
-                    item_name = self.multiworld.random.choice(scroll_pool)
-            
+            item_name = None
+            while item_name is None or item_name in sidequest_blocked_items:
+                roll = self.multiworld.random.randint(1, 100)
+
+                if (roll <= useful_percentage and
+                        useful_items_list and len(useful_items_list) > 0):
+                    candidate = self.multiworld.random.choice(useful_items_list)
+                    if candidate in sidequest_blocked_items:
+                        continue
+                    item_name = candidate
+                    useful_items_list.remove(candidate)
+                else:
+                    candidate = self.multiworld.random.choice(filler_list)
+                    if candidate == "Random Potion":
+                        candidate = self.multiworld.random.choice(potion_items)
+                    elif candidate == "Random Scroll":
+                        candidate = self.multiworld.random.choice(scroll_pool)
+                    if candidate in sidequest_blocked_items:
+                        continue
+                    item_name = candidate
+
             if item_name in item_table:
                 item_pool.append(self.create_item(item_name))
         
@@ -1335,18 +1378,18 @@ class OblivionWorld(World):
             treasure_hunter_victory_location = self.multiworld.get_location("Treasure Hunter", self.player)
             victory_item = self.create_event("Victory")
             treasure_hunter_victory_location.place_locked_item(victory_item)
-            # Victory requires reaching the highest gold threshold location that exists
+            # Victory requires enough Septim Satchel capacity to hold gold_goal.
+            # Matches Client GO MODE (current_capacity >= gold_goal) and Rules.py gold check gating.
             gold_goal = self.options.gold_goal.value
-            capacity_thresholds = [500, 1000, 2500, 5000, 7500, 10000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000]
-            valid_thresholds = [t for t in capacity_thresholds if t <= gold_goal]
-            if valid_thresholds:
-                last_threshold = valid_thresholds[-1]
-                last_threshold_name = f"Gold: {last_threshold} Collected"
-                treasure_hunter_victory_location.access_rule = lambda state, threshold=last_threshold_name: (
-                    state.can_reach_location(threshold, self.player)
-                )
-            else:
-                treasure_hunter_victory_location.access_rule = lambda state: True
+            satchel_capacities = [1000, 2500, 5000, 10000, 25000, float('inf')]
+            needed_satchels = 0
+            for i, cap in enumerate(satchel_capacities):
+                if cap >= gold_goal:
+                    needed_satchels = i
+                    break
+            treasure_hunter_victory_location.access_rule = lambda state, count=needed_satchels: (
+                state.has("Progressive Septim Satchel", self.player, count)
+            )
         elif goal == "light_the_dragonfires":
             # Chapter marker events
             chapter_event_items = {

@@ -206,7 +206,7 @@ SIDEQUEST_REGIONS = {
     "Acquire Destarine's Cleaver": "Blackwood",
     "Acquire Bow of Infliction": "Nibenay Basin",
     "Acquire Aegis of the Apocalypse": "Heartlands",
-    "Acquire Helm of the Deep Diver": "Heartlands",
+    "Acquire Helm of the Deep Delver": "Heartlands",
     "Acquire Monkeypants": "Jerall Mountains",
 }
 
@@ -368,9 +368,14 @@ def generate_nirnroot_locations() -> Dict[str, LocationData]:
 nirnroot_locations = generate_nirnroot_locations()
 location_table.update(nirnroot_locations)
 
+# Gold capacity milestone locations (Treasure Hunter goal).
+# World generation adds only thresholds <= gold_goal (same pattern as nirnroot_count).
+GOLD_CAPACITY_THRESHOLDS = [
+    500, 1000, 2500, 5000, 7500, 10000,
+    20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000,
+]
+
 # Gold threshold locations (for Treasure Hunter goal)
-# World generation adds only thresholds <= gold_goal setting
-# Base thresholds up to 10k, then 10k increments for higher goals
 gold_base_id = BASE_LOCATION_ID + len(location_names) + len(shop_item_locations) + len(class_skill_locations) + len(nirnroot_locations)
 location_table["Gold: 500 Collected"] = LocationData(gold_base_id, "Cyrodiil")
 location_table["Gold: 1000 Collected"] = LocationData(gold_base_id + 1, "Cyrodiil")
@@ -471,7 +476,7 @@ WEALTH_SIDEQUESTS = [
     "Acquire Destarine's Cleaver",
     "Acquire Bow of Infliction",
     "Acquire Aegis of the Apocalypse",
-    "Acquire Helm of the Deep Diver",
+    "Acquire Helm of the Deep Delver",
     "Acquire Monkeypants",
 ]
 
@@ -500,7 +505,7 @@ SIDEQUEST_METADATA = {
     "Acquire Destarine's Cleaver": 6400,  # Leyawiin
     "Acquire Bow of Infliction": 9100,  # Bravil
     "Acquire Aegis of the Apocalypse": 12000,  # Imperial Market
-    "Acquire Helm of the Deep Diver": 8700,  # Imperial Market
+    "Acquire Helm of the Deep Delver": 8700,  # Imperial Market
     "Acquire Monkeypants": 3600,  # Suurootan at Novaroma, Bruma
     # Exploration sidequests - no gold cost
     "Obtain a Varla Stone": 0,
@@ -512,6 +517,22 @@ SIDEQUEST_METADATA = {
 
 # Combined sidequest pool (all sidequests available)
 SIDEQUEST_POOL = WEALTH_SIDEQUESTS + EXPLORATION_SIDEQUESTS
+
+# Sidequest location names mapped to AP item names excluded from filler when seeded.
+# Wealth sidequests must be purchased in-game; receiving the item from AP skips the check.
+SIDEQUEST_TO_AP_ITEM = {
+    "Acquire Akaviri Sunderblade": "Akavari Sunderblade",
+    "Acquire Captain Kordan's Saber": "Captain Kordan's Saber",
+    "Acquire Battleaxe of Hatred": "Battleaxe of Hatred",
+    "Acquire Akavari Warblade": "Akavari Warblade",
+    "Acquire Truncheon of Submission": "Truncheon of Submission",
+    "Acquire Destarine's Cleaver": "Destarine's Cleaver",
+    "Acquire Bow of Infliction": "Bow of Infliction",
+    "Acquire Aegis of the Apocalypse": "Aegis of the Apocalypse",
+    "Acquire Helm of the Deep Delver": "Helm of the Deep Delver",
+    "Acquire Monkeypants": "Monkeypants",
+    "Obtain Fin Gleam": "Fin Gleam",
+}
 
 # Kill check location pool
 # Logic gates each batch by region unlock count
