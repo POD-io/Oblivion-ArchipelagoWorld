@@ -539,10 +539,10 @@ SIDEQUEST_TO_AP_ITEM = {
 def generate_kill_locations() -> Dict[str, LocationData]:
     locations: Dict[str, LocationData] = {}
     location_id = BASE_LOCATION_ID + len(location_table)
-    for i in range(1, 101):
+    for i in range(1, 201):
         locations[f"Dungeon Kill {i}"] = LocationData(location_id, "Cyrodiil")
         location_id += 1
-    for i in range(1, 101):
+    for i in range(1, 201):
         locations[f"Overworld Kill {i}"] = LocationData(location_id, "Cyrodiil")
         location_id += 1
     return locations

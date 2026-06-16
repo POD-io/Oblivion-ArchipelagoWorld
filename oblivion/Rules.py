@@ -429,35 +429,32 @@ def set_rules(multiworld: MultiWorld, player: int) -> None:
     
     # TREASURE HUNTER RULES - Gold collection gated by Progressive Septim Satchel capacity
     if world.options.goal.current_key == "treasure_hunter":
+        gold_goal = world.options.gold_goal.value
         # Capacity progression: Start=1000, 1st=2500, 2nd=5000, 3rd=10000, 4th=25000, 5th=Unlimited
-        # Each capacity threshold location requires enough satchels to have capacity for that amount
-        
-        capacity_rules = [
-            (500, 0),
-            (1000, 0),
-            (2500, 1),
-            (5000, 2),
-            (7500, 2),
-            (10000, 3),
-            (20000, 4),
-            (30000, 5),
-            (40000, 5),
-            (50000, 5),
-            (60000, 5),
-            (70000, 5),
-            (80000, 5),
-            (90000, 5),
-            (100000, 5),
-        ]
-        
-        for threshold, satchels_needed in capacity_rules:
+        # Fixed milestone amounts — same checks defined in Locations.py (only those <= gold_goal are seeded)
+
+        for threshold in (
+            500, 1000, 2500, 5000, 7500, 10000,
+            20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000,
+        ):
+            if threshold > gold_goal:
+                continue
             location_name = f"Gold: {threshold} Collected"
             try:
                 location = multiworld.get_location(location_name, player)
-                if satchels_needed == 0:
+
+                if threshold <= 1000:
                     location.access_rule = lambda state: True
+                elif threshold <= 2500:
+                    location.access_rule = lambda state: state.has("Progressive Septim Satchel", player, 1)
+                elif threshold <= 5000:
+                    location.access_rule = lambda state: state.has("Progressive Septim Satchel", player, 2)
+                elif threshold <= 10000:
+                    location.access_rule = lambda state: state.has("Progressive Septim Satchel", player, 3)
+                elif threshold <= 25000:
+                    location.access_rule = lambda state: state.has("Progressive Septim Satchel", player, 4)
                 else:
-                    location.access_rule = lambda state, count=satchels_needed: state.has("Progressive Septim Satchel", player, count)
+                    location.access_rule = lambda state: state.has("Progressive Septim Satchel", player, 5)
             except KeyError:
                 continue  # Location not in this seed
     
