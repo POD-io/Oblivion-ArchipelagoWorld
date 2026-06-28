@@ -1749,8 +1749,8 @@ class OblivionContext(CommonContext):
         """Handle incoming server packages."""
         if cmd == "Connected":
             self.slot_data = args.get("slot_data", {})
-            self.session_id = self.slot_data.get("session_id", "")
-            
+            self.session_id = self.slot_data.get("session_id") or ""
+
             # Set up file prefix
             auth_name = getattr(self, 'auth', None) or getattr(self, 'player_name', None) or getattr(self, 'name', None)
             if auth_name:

@@ -130,6 +130,8 @@ class OblivionWorld(World):
         return out or None
 
     def generate_early(self) -> None:
+        self.session_id = str(uuid.uuid4())
+
         # Validate goal/count combinations
         goal = self.options.goal.current_key
         if goal == "shrine_seeker" and self.options.shrine_count.value == 0:
@@ -1489,7 +1491,3 @@ class OblivionWorld(World):
             "auto_tracking": bool(self.options.auto_tracking.value),
             "silent_auto_tracking": bool(self.options.silent_auto_tracking.value),
         }
-    
-    def generate_output(self, output_directory: str) -> None:
-        """Generate unique session ID for this world instance."""
-        self.session_id = str(uuid.uuid4()) 
