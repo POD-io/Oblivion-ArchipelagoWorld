@@ -289,6 +289,14 @@ Oblivion Remastered:
     random-high: 0 # random value weighted towards higher values
     random-range-0-200: 0 # random value between 0 and 200
 
+  doomstone_checks:
+    # When true: Birthsign Doomstone visit checks are included for each unlocked region.
+    # When false: No doomstone location checks are added.
+    # 
+    # Ignored when regions are disabled.
+    'false': 0
+    'true': 50
+
   ################
   # Class System #
   ################

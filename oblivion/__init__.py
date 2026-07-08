@@ -34,7 +34,7 @@ from .Locations import (
     GOLD_CAPACITY_THRESHOLDS,
     BASE_LOCATION_ID,
 )
-from .Rules import set_rules
+from .Rules import set_rules, per_region_batch_size
 from .Options import OblivionOptions, oblivion_option_groups
 from .ShrineProgression import select_active_shrines, get_shrine_offerings
 from .Classes import get_class_data, get_all_class_names, get_class_skills, get_filtered_class_skills
@@ -124,7 +124,7 @@ class OblivionWorld(World):
         # Unique Merchant Items
         if "selected_unique_items" in slot_data:
             out["selected_unique_items"] = list(slot_data.get("selected_unique_items") or [])
-        for kill_key in ("dungeon_kills", "overworld_kills", "dungeon_kills_per_region", "overworld_kills_per_region"):
+        for kill_key in ("dungeon_kills", "overworld_kills", "dungeon_kills_per_region", "overworld_kills_per_region", "nirnroot_per_region", "doomstone_checks"):
             if kill_key in slot_data:
                 out[kill_key] = slot_data[kill_key]
         return out or None
@@ -216,10 +216,14 @@ class OblivionWorld(World):
         # Kill check options
         self.dungeon_kills = self.options.dungeon_kills.value
         self.overworld_kills = self.options.overworld_kills.value
-        # Determine per-region batch size for kill tracking
-        regions_for_kills = self.region_unlocks_count if self.region_unlocks_count > 0 else 1
-        self.dungeon_kills_per_region = math.ceil(self.dungeon_kills / regions_for_kills) if self.dungeon_kills > 0 else 0
-        self.overworld_kills_per_region = math.ceil(self.overworld_kills / regions_for_kills) if self.overworld_kills > 0 else 0
+        # Determine per-region batch size for kill / nirnroot tracking (ceil division)
+        self.dungeon_kills_per_region = per_region_batch_size(self.dungeon_kills, self.region_unlocks_count)
+        self.overworld_kills_per_region = per_region_batch_size(self.overworld_kills, self.region_unlocks_count)
+        if goal != "nirnsanity":
+            self.nirnroot_per_region = per_region_batch_size(self.options.nirnroot_count.value, self.region_unlocks_count)
+        else:
+            self.nirnroot_per_region = 0
+        self.doomstone_checks_enabled = bool(self.options.doomstone_checks.value)
         
         # Set counts based on settings
         # Suppress gate content entirely when Light the Dragonfires is the goal
@@ -661,13 +665,14 @@ class OblivionWorld(World):
                             ap_region.locations.append(location)
 
             # Place doomstones into their region nodes
-            for stone_name, region_name in getattr(self, '_birthsign_stones', []):
-                if region_name not in region_nodes:
-                    continue
-                if stone_name in location_table:
-                    data = location_table[stone_name]
-                    stone_loc = OblivionLocation(self.player, stone_name, data.id, region_nodes[region_name])
-                    region_nodes[region_name].locations.append(stone_loc)
+            if self.doomstone_checks_enabled:
+                for stone_name, region_name in getattr(self, '_birthsign_stones', []):
+                    if region_name not in region_nodes:
+                        continue
+                    if stone_name in location_table:
+                        data = location_table[stone_name]
+                        stone_loc = OblivionLocation(self.player, stone_name, data.id, region_nodes[region_name])
+                        region_nodes[region_name].locations.append(stone_loc)
         
         # Add Sidequest locations if enabled
         if hasattr(self, 'selected_sidequests') and self.selected_sidequests:
@@ -1081,7 +1086,7 @@ class OblivionWorld(World):
             gold_goal = self.options.gold_goal.value
             enabled_gold_count = sum(1 for threshold in GOLD_CAPACITY_THRESHOLDS if threshold <= gold_goal)
 
-        if self.using_regions:
+        if self.using_regions and self.doomstone_checks_enabled:
             selected_regions_set = set(self.selected_regions)
             stone_count = sum(1 for _name, region in getattr(self, '_birthsign_stones', []) if region in selected_regions_set)
         else:
@@ -1480,6 +1485,8 @@ class OblivionWorld(World):
             "overworld_kills": self.overworld_kills,
             "dungeon_kills_per_region": self.dungeon_kills_per_region,
             "overworld_kills_per_region": self.overworld_kills_per_region,
+            "nirnroot_per_region": self.nirnroot_per_region,
+            "doomstone_checks": self.doomstone_checks_enabled,
 
             # Trap settings
             "trap_percentage": self.options.trap_percentage.value,

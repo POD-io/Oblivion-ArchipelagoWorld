@@ -370,28 +370,20 @@ location_table.update(nirnroot_locations)
 
 # Gold capacity milestone locations (Treasure Hunter goal).
 # World generation adds only thresholds <= gold_goal (same pattern as nirnroot_count).
-GOLD_CAPACITY_THRESHOLDS = [
-    500, 1000, 2500, 5000, 7500, 10000,
-    20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000,
-]
+# Every 1k from 1k-10k, then every 10k up to 100k.
+GOLD_CAPACITY_THRESHOLDS = list(range(1000, 10001, 1000)) + list(range(20000, 100001, 10000))
 
-# Gold threshold locations (for Treasure Hunter goal)
-gold_base_id = BASE_LOCATION_ID + len(location_names) + len(shop_item_locations) + len(class_skill_locations) + len(nirnroot_locations)
-location_table["Gold: 500 Collected"] = LocationData(gold_base_id, "Cyrodiil")
-location_table["Gold: 1000 Collected"] = LocationData(gold_base_id + 1, "Cyrodiil")
-location_table["Gold: 2500 Collected"] = LocationData(gold_base_id + 2, "Cyrodiil")
-location_table["Gold: 5000 Collected"] = LocationData(gold_base_id + 3, "Cyrodiil")
-location_table["Gold: 7500 Collected"] = LocationData(gold_base_id + 4, "Cyrodiil")
-location_table["Gold: 10000 Collected"] = LocationData(gold_base_id + 5, "Cyrodiil")
-location_table["Gold: 20000 Collected"] = LocationData(gold_base_id + 6, "Cyrodiil")
-location_table["Gold: 30000 Collected"] = LocationData(gold_base_id + 7, "Cyrodiil")
-location_table["Gold: 40000 Collected"] = LocationData(gold_base_id + 8, "Cyrodiil")
-location_table["Gold: 50000 Collected"] = LocationData(gold_base_id + 9, "Cyrodiil")
-location_table["Gold: 60000 Collected"] = LocationData(gold_base_id + 10, "Cyrodiil")
-location_table["Gold: 70000 Collected"] = LocationData(gold_base_id + 11, "Cyrodiil")
-location_table["Gold: 80000 Collected"] = LocationData(gold_base_id + 12, "Cyrodiil")
-location_table["Gold: 90000 Collected"] = LocationData(gold_base_id + 13, "Cyrodiil")
-location_table["Gold: 100000 Collected"] = LocationData(gold_base_id + 14, "Cyrodiil")
+
+def generate_gold_locations() -> Dict[str, LocationData]:
+    locations: Dict[str, LocationData] = {}
+    location_id = BASE_LOCATION_ID + len(location_names) + len(shop_item_locations) + len(class_skill_locations) + len(nirnroot_locations)
+    for threshold in GOLD_CAPACITY_THRESHOLDS:
+        locations[f"Gold: {threshold} Collected"] = LocationData(location_id, "Cyrodiil")
+        location_id += 1
+    return locations
+
+
+location_table.update(generate_gold_locations())
 
 # Event & victory locations (used for playthrough generation)
 location_table["Shrine Seeker"] = LocationData(EventId, "Cyrodiil")

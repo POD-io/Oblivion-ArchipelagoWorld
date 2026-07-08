@@ -9,7 +9,7 @@ from NetUtils import ClientStatus
 
 # Import for tracker functionality
 from . import Items, Locations
-from .Rules import set_rules
+from .Rules import set_rules, required_region_unlocks
 
 class OblivionTracker:
     """Tracker for Oblivion Remastered logic and items."""
@@ -129,6 +129,15 @@ class OblivionTracker:
         checked_locations = getattr(self.ctx, 'checked_locations', set())
         return location_data.id in checked_locations
     
+    def _region_batch_accessible(self, check_index: int, per_region: int, slot_data: dict) -> bool:
+        """Same region-batch gate used for kill checks and non-Nirnsanity nirnroots."""
+        selected_regions = slot_data.get("selected_regions", []) or []
+        if not selected_regions or per_region <= 0:
+            return True
+        required_regions = required_region_unlocks(check_index, per_region)
+        regions_unlocked = sum(1 for r in selected_regions if self.has(f"{r} Access", 1))
+        return regions_unlocked >= required_regions
+    
     def check_location_accessibility(self, location_name):
         """Check if a location is accessible based on the game rules."""
         slot_data = getattr(self.ctx, 'slot_data', {})
@@ -211,10 +220,14 @@ class OblivionTracker:
 
         # Check Nirnroot harvesting rules
         if location_name.startswith("Nirnroot ") and location_name.endswith(" Harvested"):
-            # When goal is NOT Nirnsanity: All Nirnroot locations are immediately accessible
             goal = slot_data.get("goal")
             if goal != "nirnsanity":
-                return True
+                try:
+                    nirnroot_num = int(location_name.split()[1])
+                    nirnroot_per_region = slot_data.get("nirnroot_per_region", 0)
+                    return self._region_batch_accessible(nirnroot_num, nirnroot_per_region, slot_data)
+                except (ValueError, IndexError):
+                    return True
             
             # When goal IS Nirnsanity: Gated by Progressive Nirnroot Satchel capacity
             try:
@@ -486,16 +499,10 @@ class OblivionTracker:
         # Kill location access: gated by region unlock count in batches
         if location_name.startswith("Dungeon Kill ") or location_name.startswith("Overworld Kill "):
             try:
-                import math
                 kill_type = "dungeon" if location_name.startswith("Dungeon Kill ") else "overworld"
                 kill_num = int(location_name.split()[-1])
                 kills_per_region = slot_data.get(f"{kill_type}_kills_per_region", 0)
-                selected_regions = slot_data.get("selected_regions", []) or []
-                if not selected_regions or kills_per_region == 0:
-                    return True
-                required_regions = math.ceil(kill_num / kills_per_region)
-                regions_unlocked = sum(1 for r in selected_regions if self.has(f"{r} Access", 1))
-                return regions_unlocked >= required_regions
+                return self._region_batch_accessible(kill_num, kills_per_region, slot_data)
             except (ValueError, IndexError):
                 return True
 
@@ -1208,10 +1215,12 @@ class OblivionTracker:
                 out_rows.append({"text": "[color=00ff00]Goal Complete![/color]"})
         
         elif goal_key == "treasure_hunter":
-            # Treasure Hunter: Track septim satchels needed to reach gold goal amount
+            from .Locations import GOLD_CAPACITY_THRESHOLDS
+
             gold_goal = slot_data.get("gold_goal", 10000)
             septim_satchels = self.items.get("Progressive Septim Satchel", 0)
-            
+            thresholds = [t for t in GOLD_CAPACITY_THRESHOLDS if t <= gold_goal]
+
             # Satchel capacities
             satchel_capacities = [1000, 2500, 5000, 10000, 25000, float('inf')]
             current_capacity = satchel_capacities[septim_satchels] if septim_satchels < len(satchel_capacities) else float('inf')
@@ -1224,29 +1233,50 @@ class OblivionTracker:
                     break
             
             out_rows.append({"text": f"[b]Gold Goal:[/b] {gold_goal:,}"})
-            # Display current capacity
             if current_capacity == float('inf'):
                 out_rows.append({"text": "[b]Current Capacity:[/b] Unlimited"})
             else:
                 out_rows.append({"text": f"[b]Current Capacity:[/b] {int(current_capacity):,} gold"})
             out_rows.append({"text": ""})
+
+            collected_count = 0
+            for threshold in thresholds:
+                if self.is_location_checked(f"Gold: {threshold} Collected"):
+                    collected_count += 1
+
+            out_rows.append({"text": "[b]In-Game Gold Collection Checks:[/b]"})
+            out_rows.append({"text": f"  Collected: {collected_count}/{len(thresholds)}"})
+
+            if current_capacity != float('inf'):
+                available_now = sum(
+                    1 for threshold in thresholds
+                    if threshold <= current_capacity and not self.is_location_checked(f"Gold: {threshold} Collected")
+                )
+                if available_now > 0:
+                    out_rows.append({"text": f"  Available now (within capacity): {available_now}"})
+
+            if current_capacity == float('inf') or current_capacity >= gold_goal:
+                total_remaining = len(thresholds) - collected_count
+                if total_remaining > 0:
+                    out_rows.append({"text": f"  Total remaining: {total_remaining}"})
+
+            out_rows.append({"text": ""})
             
             # Show only the satchels needed for the goal
             if needed_satchels > 0:
-                out_rows.append({"text": "[b]Progressive Septim Satchels:[/b]"})
+                out_rows.append({"text": "[b]Progression Items:[/b]"})
                 for i in range(needed_satchels):
                     has_satchel = i < septim_satchels
                     capacity = satchel_capacities[i + 1]
-                    # Format capacity display
                     if capacity == float('inf'):
                         capacity_str = "Unlimited"
                     else:
                         capacity_str = f"{int(capacity):,}"
                     
                     if has_satchel:
-                        out_rows.append({"text": f"[color=00ff00]Satchel {i+1}: {capacity_str} capacity[/color]"})
+                        out_rows.append({"text": f"[color=00ff00]Progressive Septim Satchel {i+1} (Capacity: {capacity_str})[/color]"})
                     else:
-                        out_rows.append({"text": f"Satchel {i+1}: {capacity_str} capacity"})
+                        out_rows.append({"text": f"Progressive Septim Satchel {i+1} (Capacity: {capacity_str})"})
                 out_rows.append({"text": ""})
             
             # Check if goal is complete or in go mode
@@ -2302,6 +2332,14 @@ class OblivionContext(CommonContext):
                     f.write(f"dungeon_kills_per_region={self.slot_data.get('dungeon_kills_per_region', dungeon_kills)}\n")
                     f.write(f"overworld_kills_per_region={self.slot_data.get('overworld_kills_per_region', overworld_kills)}\n")
 
+                doomstone_checks = self.slot_data.get("doomstone_checks", True)
+                f.write(f"doomstone_checks={'True' if bool(doomstone_checks) else 'False'}\n")
+
+                if goal != "nirnsanity":
+                    nirnroot_count = int(self.slot_data.get("nirnroot_count", 0) or 0)
+                    if nirnroot_count > 0:
+                        f.write(f"nirnroot_per_region={self.slot_data.get('nirnroot_per_region', nirnroot_count)}\n")
+
                 # Write selected regions and per-region dungeon lists for the mod
                 selected_regions = self.slot_data.get("selected_regions", []) or []
                 dungeons_by_region = self.slot_data.get("dungeons_by_region", {}) or {}
@@ -2681,12 +2719,21 @@ class OblivionContext(CommonContext):
                 elif item == "Nirnroot Harvested":
                     nirnroot_count = self.slot_data.get("nirnroot_count", 100)
                     
-                    # Find the first unchecked Nirnroot location
+                    # Find the first unchecked Nirnroot location that is currently in logic
                     for nirnroot_num in range(1, nirnroot_count + 1):
                         location_name = f"Nirnroot {nirnroot_num} Harvested"
                         if location_name in name_to_id_map:
                             location_id = name_to_id_map[location_name]
                             if location_id in self.missing_locations and location_id not in new_locations:
+                                is_accessible = False
+                                try:
+                                    if self.tracker:
+                                        is_accessible = self.tracker.check_location_accessibility(location_name)
+                                except Exception:
+                                    is_accessible = True
+                                if not is_accessible:
+                                    logger.debug(f"{location_name} is out of logic, skipping nirnroot harvest")
+                                    break
                                 new_locations.append(location_id)
                                 break  # Only send one check per harvest event
 

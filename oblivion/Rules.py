@@ -2,6 +2,22 @@ from BaseClasses import MultiWorld
 from typing import List
 import math
 
+from .Locations import GOLD_CAPACITY_THRESHOLDS
+
+
+def per_region_batch_size(total_checks: int, region_unlocks_count: int) -> int:
+    if total_checks <= 0:
+        return 0
+    regions = region_unlocks_count if region_unlocks_count > 0 else 1
+    return math.ceil(total_checks / regions)
+
+
+def required_region_unlocks(check_index: int, per_region: int) -> int:
+    if per_region <= 0:
+        return 0
+    return math.ceil(check_index / per_region)
+
+
 def set_rules(multiworld: MultiWorld, player: int) -> None:
     """
     Set the logical rules for Oblivion Remastered.
@@ -415,15 +431,24 @@ def set_rules(multiworld: MultiWorld, player: int) -> None:
             except KeyError:
                 continue  # Location not in this seed
     
-    # NON-NIRNSANITY NIRNROOT CHECKS - No capacity restrictions, all immediately accessible
+    # NON-NIRNSANITY NIRNROOT CHECKS - region-batched when regions enabled
+    region_access_items = [f"{r} Access" for r in getattr(world, "selected_regions", [])]
+
     if world.options.goal.current_key != "nirnsanity":
         nirnroot_count = world.options.nirnroot_count.value
         if nirnroot_count > 0:
+            kpr = getattr(world, "nirnroot_per_region", 0)
             for nirnroot_num in range(1, nirnroot_count + 1):
                 location_name = f"Nirnroot {nirnroot_num} Harvested"
                 try:
                     location = multiworld.get_location(location_name, player)
-                    location.access_rule = lambda state: True
+                    if region_access_items and kpr > 0:
+                        required = required_region_unlocks(nirnroot_num, kpr)
+                        location.access_rule = lambda state, r=required, items=region_access_items: (
+                            sum(1 for item in items if state.has(item, player)) >= r
+                        )
+                    else:
+                        location.access_rule = lambda state: True
                 except KeyError:
                     continue  # Location not in this seed
     
@@ -431,12 +456,8 @@ def set_rules(multiworld: MultiWorld, player: int) -> None:
     if world.options.goal.current_key == "treasure_hunter":
         gold_goal = world.options.gold_goal.value
         # Capacity progression: Start=1000, 1st=2500, 2nd=5000, 3rd=10000, 4th=25000, 5th=Unlimited
-        # Fixed milestone amounts — same checks defined in Locations.py (only those <= gold_goal are seeded)
 
-        for threshold in (
-            500, 1000, 2500, 5000, 7500, 10000,
-            20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000,
-        ):
+        for threshold in GOLD_CAPACITY_THRESHOLDS:
             if threshold > gold_goal:
                 continue
             location_name = f"Gold: {threshold} Collected"
@@ -462,7 +483,6 @@ def set_rules(multiworld: MultiWorld, player: int) -> None:
     # Kill locations are gated by region unlock count: kill N requires (N / kills_per_region) regions.
     # The starting region is always precollected, so the first batch is immediately accessible.
     # If no regions are configured, all kill locations are immediately accessible.
-    region_access_items = [f"{r} Access" for r in getattr(world, 'selected_regions', [])]
 
     if world.dungeon_kills > 0:
         kpr = world.dungeon_kills_per_region
@@ -471,7 +491,7 @@ def set_rules(multiworld: MultiWorld, player: int) -> None:
             try:
                 loc = multiworld.get_location(location_name, player)
                 if region_access_items and kpr > 0:
-                    required = math.ceil(i / kpr)
+                    required = required_region_unlocks(i, kpr)
                     loc.access_rule = lambda state, r=required, items=region_access_items: (
                         sum(1 for item in items if state.has(item, player)) >= r
                     )
@@ -487,7 +507,7 @@ def set_rules(multiworld: MultiWorld, player: int) -> None:
             try:
                 loc = multiworld.get_location(location_name, player)
                 if region_access_items and kpr > 0:
-                    required = math.ceil(i / kpr)
+                    required = required_region_unlocks(i, kpr)
                     loc.access_rule = lambda state, r=required, items=region_access_items: (
                         sum(1 for item in items if state.has(item, player)) >= r
                     )

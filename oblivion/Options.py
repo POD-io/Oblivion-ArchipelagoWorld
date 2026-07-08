@@ -197,6 +197,16 @@ class OverworldKills(Range):
     range_end = 200
     default = 40
 
+class DoomstoneChecks(Toggle):
+    """
+    When true: Birthsign Doomstone visit checks are included for each unlocked region.
+    When false: No doomstone location checks are added.
+
+    Ignored when regions are disabled.
+    """
+    display_name = "Doomstone Checks"
+    default = 1
+
 # =====================================================
 # CLASS SYSTEM
 # =====================================================
@@ -522,6 +532,7 @@ class OblivionOptions(PerGameCommonOptions):
     exploration_sidequest_count: ExplorationSidequestCount
     dungeon_kills: DungeonKills
     overworld_kills: OverworldKills
+    doomstone_checks: DoomstoneChecks
 
     # Class System
     class_selection: ClassSelection
@@ -568,7 +579,8 @@ oblivion_option_groups = [
         WealthSidequestCount,
         ExplorationSidequestCount,
         DungeonKills,
-        OverworldKills
+        OverworldKills,
+        DoomstoneChecks
     ]),
     OptionGroup("Class System", [
         ClassSelection,
