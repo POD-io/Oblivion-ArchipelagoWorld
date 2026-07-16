@@ -1,9 +1,10 @@
-## Oblivion Remastered - Archipelago World
+## Archipelago World for Oblivion Remastered
 
-An Archipelago integration for **The Elder Scrolls IV: Oblivion Remastered**.  
-**Requires:** [Oblivion-ArchipelagoMod](https://github.com/POD-io/Oblivion-ArchipelagoMod) and APWorld **0.5.0**.
+An Archipelago integration for **The Elder Scrolls IV: Oblivion Remastered**.
 
-[Download Latest Release](https://github.com/POD-io/Oblivion-ArchipelagoWorld/releases/latest)  
+**Required Downloads**
+- [Oblivion Archipelago Mod](https://github.com/POD-io/Oblivion-ArchipelagoMod/releases/latest)
+- [Oblivion Archipelago APWorld](https://github.com/POD-io/Oblivion-ArchipelagoWorld/releases/latest)
 
 ## Overview
 
