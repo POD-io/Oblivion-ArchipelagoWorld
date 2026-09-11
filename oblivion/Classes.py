@@ -1,5 +1,5 @@
 """
-Class definitions for Oblivion Remastered APWorld.
+Class definitions.
 
 Each class has 7 major skills that determine which skill checks are valid.
 When a class is selected, only these skills will be tracked for location checks.

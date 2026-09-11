@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 import math
 from worlds.AutoWorld import World, WebWorld
@@ -18,6 +19,7 @@ from .Items import (
     region_unlock_items,
     unique_merchant_categories,
     trap_items,
+    WEAPON_LICENSE_BY_CATEGORY,
 )
 from .Locations import (
     location_table,
@@ -38,6 +40,8 @@ from .Rules import set_rules, per_region_batch_size
 from .Options import OblivionOptions, oblivion_option_groups
 from .ShrineProgression import select_active_shrines, get_shrine_offerings
 from .Classes import get_class_data, get_all_class_names, get_class_skills, get_filtered_class_skills
+from .Bounties import generate_bounties
+from .Locations import FENCE_THRESHOLDS, fence_location_name
 
 # Client registration
 def launch_client(*args):
@@ -124,7 +128,15 @@ class OblivionWorld(World):
         # Unique Merchant Items
         if "selected_unique_items" in slot_data:
             out["selected_unique_items"] = list(slot_data.get("selected_unique_items") or [])
-        for kill_key in ("dungeon_kills", "overworld_kills", "dungeon_kills_per_region", "overworld_kills_per_region", "nirnroot_per_region", "doomstone_checks"):
+        if "selected_bounties" in slot_data:
+            out["selected_bounties"] = list(slot_data.get("selected_bounties") or [])
+        for kill_key in (
+            "dungeon_kills", "overworld_kills", "oblivion_kills",
+            "dungeon_kills_per_region", "overworld_kills_per_region", "oblivion_kills_per_gate",
+            "oblivion_kills_per_region",
+            "nirnroot_per_region", "doomstone_checks", "weapon_lock",
+            "starting_weapon",
+        ):
             if kill_key in slot_data:
                 out[kill_key] = slot_data[kill_key]
         return out or None
@@ -147,6 +159,8 @@ class OblivionWorld(World):
                 raise OptionError("Dungeons per Region cannot be 0 when Goal is Dungeon Delver")
         if goal == "nirnsanity" and self.options.nirnroot_count.value == 0:
             raise OptionError("Nirnroot Count cannot be 0 when Goal is Nirnsanity. Set it to at least 10.")
+        if goal == "bounty_hunter" and self.options.bounty_count.value < 1:
+            raise OptionError("Bounty Count cannot be 0 when Goal is Bounty Hunter")
         
         # Handle class selection
         passthrough = getattr(self.multiworld, "re_gen_passthrough", None)
@@ -234,6 +248,30 @@ class OblivionWorld(World):
         self.skill_count = 0
         # Total dungeons will be computed after selecting regions/dungeons
         self.dungeon_count = 0
+
+        if self.options.oblivion_kills.value > 0 and (self.gate_count > 0 or goal == "light_the_dragonfires"):
+            self.oblivion_kills = self.options.oblivion_kills.value
+            self.oblivion_kills_per_gate = (
+                per_region_batch_size(self.oblivion_kills, self.gate_count)
+                if self.gate_count > 0 else 0
+            )
+            self.oblivion_kills_per_region = per_region_batch_size(
+                self.oblivion_kills, self.region_unlocks_count
+            )
+        else:
+            self.oblivion_kills = 0
+            self.oblivion_kills_per_gate = 0
+            self.oblivion_kills_per_region = 0
+
+        self.weapon_lock = bool(self.options.weapon_lock.value)
+        start_weapon = "blade"
+        if self.weapon_lock:
+            start_weapon = self.options.starting_weapon.current_key
+            if pt and pt.get("starting_weapon"):
+                start_weapon = str(pt["starting_weapon"]).strip().lower()
+            if start_weapon == "random_weapon" or start_weapon not in WEAPON_LICENSE_BY_CATEGORY:
+                start_weapon = self.multiworld.random.choice(sorted(WEAPON_LICENSE_BY_CATEGORY))
+        self.starting_weapon = start_weapon
         
         # For arena: ignore setting when goal is arena, use setting otherwise
         if goal == "arena":
@@ -504,7 +542,7 @@ class OblivionWorld(World):
             self.selected_unique_items = []
             # Define how many items to select from each category (min, max)
             category_limits = {
-                "weapons": (1, 2),      # 10 total -> select 1-2
+                "weapons": (1, 2),      # 13 total -> select 1-2
                 "shields": (0, 1),      # 3 total -> select 0-1
                 "gauntlets": (0, 1),    # 4 total -> select 0-1
                 "helmets": (0, 1),      # 4 total -> select 0-1
@@ -529,6 +567,23 @@ class OblivionWorld(World):
                 f"Player {self.player}: Selected {len(self.selected_unique_items)} unique merchant items"
             )
 
+        self.black_market_limit = self.options.black_market_checks.value
+        self.fence_locations = [
+            fence_location_name(amount)
+            for amount in FENCE_THRESHOLDS
+            if amount <= self.black_market_limit
+        ] if self.black_market_limit > 0 else []
+
+        bounty_count = self.options.bounty_count.value
+        if pt and pt.get("selected_bounties") is not None:
+            self.selected_bounties = list(pt.get("selected_bounties") or [])
+        else:
+            self.selected_bounties = generate_bounties(
+                self.multiworld.random,
+                bounty_count,
+                getattr(self, "selected_dungeons", []) or [],
+            )
+
         # Prevent sidequest-linked items from appearing as filler when their check is seeded
         if getattr(self, 'selected_sidequests', None):
             blocked_sidequest_items = {
@@ -541,8 +596,27 @@ class OblivionWorld(World):
                     item_name for item_name in self.selected_unique_items
                     if item_name not in blocked_sidequest_items
                 ]
-    
-    def create_regions(self) -> None:
+
+        self.apply_bounty_datapackage_names()
+
+    def apply_bounty_datapackage_names(self) -> None:
+        """Use this seed's bounty display strings as the datapackage location names."""
+        mapping = dict(type(self).location_name_to_id)
+        for contract in getattr(self, "selected_bounties", []) or []:
+            generics = list(contract.get("locations") or [])
+            shown = list(contract.get("location_names") or [])
+            for i, generic in enumerate(generics):
+                loc_id = mapping.get(generic)
+                if loc_id is None:
+                    data = location_table.get(generic)
+                    loc_id = data.id if data else None
+                if loc_id is None:
+                    continue
+                name = shown[i] if i < len(shown) and shown[i] else generic
+                mapping[name] = loc_id
+                if name != generic:
+                    mapping.pop(generic, None)
+        self.location_name_to_id = mapping
         menu_region = Region("Menu", self.player, self.multiworld)
   
         cyrodiil_region = Region("Cyrodiil", self.player, self.multiworld)
@@ -699,6 +773,31 @@ class OblivionWorld(World):
                     location = OblivionLocation(self.player, location_name, location_data.id, cyrodiil_region)
                     cyrodiil_region.locations.append(location)
 
+        if self.oblivion_kills > 0:
+            for i in range(1, self.oblivion_kills + 1):
+                location_name = f"Oblivion Kill {i}"
+                if location_name in location_table:
+                    location_data = location_table[location_name]
+                    location = OblivionLocation(self.player, location_name, location_data.id, cyrodiil_region)
+                    cyrodiil_region.locations.append(location)
+
+        for fence_name in getattr(self, "fence_locations", []):
+            if fence_name in location_table:
+                location_data = location_table[fence_name]
+                location = OblivionLocation(self.player, fence_name, location_data.id, cyrodiil_region)
+                cyrodiil_region.locations.append(location)
+
+        for contract in getattr(self, "selected_bounties", []) or []:
+            generic_names = list(contract.get("locations", []) or [])
+            shown_names = list(contract.get("location_names") or [])
+            for i, location_name in enumerate(generic_names):
+                if location_name not in location_table:
+                    continue
+                location_data = location_table[location_name]
+                shown = shown_names[i] if i < len(shown_names) else location_name
+                location = OblivionLocation(self.player, shown, location_data.id, cyrodiil_region)
+                cyrodiil_region.locations.append(location)
+
         # Connect menu to game
         connection = Entrance(self.player, "New Game", menu_region)
         connection.connect(cyrodiil_region)
@@ -768,6 +867,11 @@ class OblivionWorld(World):
                 location_data = location_table["Treasure Hunter"]
                 victory_location = OblivionLocation(self.player, "Treasure Hunter", location_data.id, cyrodiil_region)
                 cyrodiil_region.locations.append(victory_location)
+        elif goal == "bounty_hunter":
+            if "Bounty Hunter" in location_table:
+                location_data = location_table["Bounty Hunter"]
+                bounty_victory_location = OblivionLocation(self.player, "Bounty Hunter", location_data.id, cyrodiil_region)
+                cyrodiil_region.locations.append(bounty_victory_location)
         
         # Add Nirnroot harvesting checks when goal is NOT Nirnsanity
         if goal != "nirnsanity":
@@ -897,6 +1001,21 @@ class OblivionWorld(World):
             # Add 4 Progressive Shop Stock items
             for i in range(4):
                 item_pool.append(self.create_item(shop_stock_item_name))
+
+        if getattr(self, "fence_locations", None):
+            if "Black Market Access" in item_table and "Black Market Access" not in precollected_items:
+                item_pool.append(self.create_item("Black Market Access"))
+
+        bounty_contracts = getattr(self, "selected_bounties", []) or []
+        if bounty_contracts and "Progressive Bounty Contract" in item_table:
+            licenses_needed = max(0, len(bounty_contracts) - 1)
+            started = sum(
+                1
+                for item in self.multiworld.precollected_items[self.player]
+                if item.name == "Progressive Bounty Contract"
+            )
+            for _ in range(max(0, licenses_needed - started)):
+                item_pool.append(self.create_item("Progressive Bounty Contract"))
         
         # Add Progressive Class Level items to item pool if class system is enabled
         if self.selected_class is not None:
@@ -904,23 +1023,31 @@ class OblivionWorld(World):
             precollected_names = {item.name for item in self.multiworld.precollected_items[self.player]}
             precollected_count = sum(1 for name in precollected_names if name == self.progressive_class_level_item_name)
 
-            # If Start With Class is enabled and none are precollected yet, precollect one
+            class_start = self.options.start_with_class.current_key
             try:
-                if self.options.start_with_class.value and precollected_count == 0:
+                if class_start == "start_with" and precollected_count == 0:
                     self.multiworld.push_precollected(self.create_item(self.progressive_class_level_item_name))
                     precollected_count += 1
             except Exception:
                 pass
 
-            # If player does NOT start with class and none are precollected, guarantee one early placement
-            # (not restricted to local locations)
-            if not self.options.start_with_class.value and precollected_count == 0:
-                self.multiworld.early_items[self.player][self.progressive_class_level_item_name] = 1
+            if precollected_count == 0:
+                if class_start == "local_early":
+                    self.multiworld.local_early_items[self.player][self.progressive_class_level_item_name] = 1
+                elif class_start != "start_with":
+                    self.multiworld.early_items[self.player][self.progressive_class_level_item_name] = 1
 
             # Add remaining Progressive Class Level items to the pool up to the maximum
             levels_to_add = max(0, self.class_level_maximum - precollected_count)
             for _ in range(levels_to_add):
                 item_pool.append(self.create_item(self.progressive_class_level_item_name))
+
+        if self.weapon_lock:
+            start_license = WEAPON_LICENSE_BY_CATEGORY[self.starting_weapon]
+            self.multiworld.push_precollected(self.create_item(start_license))
+            for category, license_name in WEAPON_LICENSE_BY_CATEGORY.items():
+                if license_name != start_license:
+                    item_pool.append(self.create_item(license_name))
         
         # Add Oblivion Gate Keys based on gate count and extra keys setting
         gate_key_item_name = "Oblivion Gate Key"
@@ -1108,13 +1235,20 @@ class OblivionWorld(World):
         # Count kill check locations
         enabled_dungeon_kill_count = self.dungeon_kills
         enabled_overworld_kill_count = self.overworld_kills
+        enabled_oblivion_kill_count = self.oblivion_kills
+        enabled_fence_count = len(getattr(self, "fence_locations", []) or [])
+        enabled_bounty_count = sum(
+            len(contract.get("locations", []))
+            for contract in getattr(self, "selected_bounties", []) or []
+        )
 
         # Count all fillable locations: visits + shrines + shops + arena + gates + class_skills + dungeons + mq milestones + sidequests + kills (exclude Victory event)
         total_locations = (
             enabled_visit_count + enabled_shrine_count + enabled_shop_count + enabled_arena_count +
             enabled_gate_count + enabled_class_skill_count + enabled_dungeon_count + mq_milestone_count +
             enabled_nirnroot_count + enabled_gold_count + enabled_sidequest_count +
-            enabled_dungeon_kill_count + enabled_overworld_kill_count
+            enabled_dungeon_kill_count + enabled_overworld_kill_count + enabled_oblivion_kill_count +
+            enabled_fence_count + enabled_bounty_count
         )
         
         # Filter useful items based on randomized vs vanilla shrines
@@ -1263,6 +1397,7 @@ class OblivionWorld(World):
                     "Movement Trap": self.options.movement_trap_weight.value,
                     "Storm Trap": self.options.storm_trap_weight.value,
                     "Spawn Trap": self.options.spawn_trap_weight.value,
+                    "Wanted Trap": self.options.wanted_trap_weight.value,
                 }
                 for trap_name in trap_items:
                     weight = trap_weight_map.get(trap_name, 0)
@@ -1397,6 +1532,16 @@ class OblivionWorld(World):
             treasure_hunter_victory_location.access_rule = lambda state, count=needed_satchels: (
                 state.has("Progressive Septim Satchel", self.player, count)
             )
+        elif goal == "bounty_hunter":
+            bounty_victory_location = self.multiworld.get_location("Bounty Hunter", self.player)
+            victory_item = self.create_event("Victory")
+            bounty_victory_location.place_locked_item(victory_item)
+            required_locations = []
+            for contract in getattr(self, "selected_bounties", []) or []:
+                required_locations.extend(contract.get("locations", []))
+            bounty_victory_location.access_rule = lambda state, locs=required_locations: (
+                bool(locs) and all(state.can_reach_location(loc, self.player) for loc in locs)
+            )
         elif goal == "light_the_dragonfires":
             # Chapter marker events
             chapter_event_items = {
@@ -1422,6 +1567,17 @@ class OblivionWorld(World):
         
         # Default completion condition for other goals: require Victory event item (placed above)
         self.multiworld.completion_condition[self.player] = lambda state: state.has("Victory", self.player)
+
+    def _fallback_session_id(self) -> str:
+        seed = getattr(self.multiworld, "seed_name", None) or str(getattr(self.multiworld, "seed", "") or "")
+        return hashlib.sha256(f"{seed}:{self.player}".encode("utf-8")).hexdigest()
+
+    def _resolved_session_id(self) -> str:
+        session_id = getattr(self, "session_id", None) or ""
+        if not session_id:
+            session_id = self._fallback_session_id()
+            self.session_id = session_id
+        return session_id
     
     def fill_slot_data(self) -> Dict[str, Any]:
         # Data sent to the client
@@ -1444,7 +1600,7 @@ class OblivionWorld(World):
             "shrine_count": len(self.active_shrines),
             "gate_count_required": self.gate_count,
             "extra_gate_keys": self.options.extra_gate_keys.value,
-            "session_id": getattr(self, 'session_id', None),
+            "session_id": self._resolved_session_id(),
             "progressive_shop_stock": True,
             "progressive_armor_sets": True,
             
@@ -1483,8 +1639,16 @@ class OblivionWorld(World):
             # Kill check settings
             "dungeon_kills": self.dungeon_kills,
             "overworld_kills": self.overworld_kills,
+            "oblivion_kills": self.oblivion_kills,
+            "dungeon_kills_per_check": self.options.dungeon_kills_per_check.value,
+            "overworld_kills_per_check": self.options.overworld_kills_per_check.value,
+            "oblivion_kills_per_check": self.options.oblivion_kills_per_check.value,
             "dungeon_kills_per_region": self.dungeon_kills_per_region,
             "overworld_kills_per_region": self.overworld_kills_per_region,
+            "oblivion_kills_per_gate": self.oblivion_kills_per_gate,
+            "oblivion_kills_per_region": self.oblivion_kills_per_region,
+            "weapon_lock": self.weapon_lock,
+            "starting_weapon": self.starting_weapon,
             "nirnroot_per_region": self.nirnroot_per_region,
             "doomstone_checks": self.doomstone_checks_enabled,
 
@@ -1493,8 +1657,14 @@ class OblivionWorld(World):
             "movement_trap_weight": self.options.movement_trap_weight.value,
             "storm_trap_weight": self.options.storm_trap_weight.value,
             "spawn_trap_weight": self.options.spawn_trap_weight.value,
+            "wanted_trap_weight": self.options.wanted_trap_weight.value,
+            "black_market_limit": getattr(self, "black_market_limit", 0),
+            "bounty_count": len(getattr(self, "selected_bounties", []) or []),
+            "selected_bounties": getattr(self, "selected_bounties", []),
 
             # QoL settings
             "auto_tracking": bool(self.options.auto_tracking.value),
             "silent_auto_tracking": bool(self.options.silent_auto_tracking.value),
+            "ap_tips": bool(self.options.ap_tips.value),
+            "skill_xp_multiplier": self.options.skill_xp_multiplier.value,
         }

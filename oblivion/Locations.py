@@ -197,6 +197,9 @@ SIDEQUEST_REGIONS = {
     "Obtain Fin Gleam": "Gold Coast",
     "Visit Dive Rock": "Jerall Mountains",
     "Obtain Bands of Kwang Lao": "Heartlands",
+    "Use Anvil Lighthouse Beacon": "Gold Coast",
+    "Kiss Lucky Old Lady": "Nibenay Valley",
+    "Visit Cadlew Chapel": "Nibenay Valley",
     # Wealth sidequests
     "Acquire Akaviri Sunderblade": "Heartlands",
     "Acquire Captain Kordan's Saber": "Nibenay Valley",
@@ -393,6 +396,7 @@ location_table["Dungeon Delver"] = LocationData(EventId, "Cyrodiil")
 location_table["Light the Dragonfires"] = LocationData(EventId, "Cyrodiil")
 location_table["Nirnsanity"] = LocationData(EventId, "Cyrodiil")
 location_table["Treasure Hunter"] = LocationData(EventId, "Cyrodiil")
+location_table["Bounty Hunter"] = LocationData(EventId, "Cyrodiil")
 location_table["Weynon Priory Quest Complete"] = LocationData(EventId, "Cyrodiil")
 location_table["Paradise Complete"] = LocationData(EventId, "Cyrodiil")
 
@@ -478,6 +482,9 @@ EXPLORATION_SIDEQUESTS = [
     "Visit Dive Rock",
     "Obtain Bands of Kwang Lao",
     "Visit an Ayleid Well",
+    "Use Anvil Lighthouse Beacon",
+    "Kiss Lucky Old Lady",
+    "Visit Cadlew Chapel",
 ]
 
 # Register all sidequest locations in location_table
@@ -505,6 +512,9 @@ SIDEQUEST_METADATA = {
     "Visit Dive Rock": 0,
     "Obtain Bands of Kwang Lao": 0,
     "Visit an Ayleid Well": 0,
+    "Use Anvil Lighthouse Beacon": 0,
+    "Kiss Lucky Old Lady": 0,
+    "Visit Cadlew Chapel": 0,
 }
 
 # Combined sidequest pool (all sidequests available)
@@ -541,3 +551,51 @@ def generate_kill_locations() -> Dict[str, LocationData]:
 
 kill_locations = generate_kill_locations()
 location_table.update(kill_locations)
+
+FENCE_THRESHOLDS = [50, 150, 300, 500, 1000, 2000, 3000, 4000, 5000]
+
+
+def fence_location_name(amount: int) -> str:
+    return f"Black Market: {amount} Gold Fenced"
+
+
+BLACK_MARKET_LOCATIONS = [fence_location_name(amount) for amount in FENCE_THRESHOLDS]
+
+
+def generate_black_market_locations() -> Dict[str, LocationData]:
+    locations: Dict[str, LocationData] = {}
+    location_id = BASE_LOCATION_ID + len(location_table)
+    for name in BLACK_MARKET_LOCATIONS:
+        locations[name] = LocationData(location_id, "Cyrodiil")
+        location_id += 1
+    return locations
+
+
+location_table.update(generate_black_market_locations())
+
+
+from .Bounties import all_bounty_location_names
+
+
+def generate_bounty_locations() -> Dict[str, LocationData]:
+    locations: Dict[str, LocationData] = {}
+    location_id = BASE_LOCATION_ID + len(location_table)
+    for name in all_bounty_location_names():
+        locations[name] = LocationData(location_id, "Cyrodiil")
+        location_id += 1
+    return locations
+
+
+location_table.update(generate_bounty_locations())
+
+
+def generate_oblivion_kill_locations() -> Dict[str, LocationData]:
+    locations: Dict[str, LocationData] = {}
+    location_id = BASE_LOCATION_ID + len(location_table)
+    for i in range(1, 201):
+        locations[f"Oblivion Kill {i}"] = LocationData(location_id, "Cyrodiil")
+        location_id += 1
+    return locations
+
+
+location_table.update(generate_oblivion_kill_locations())

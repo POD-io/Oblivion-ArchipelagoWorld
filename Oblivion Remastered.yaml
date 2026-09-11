@@ -34,7 +34,7 @@ game: Oblivion Remastered
 requires:
   version: 0.6.7 # Version of Archipelago required for this yaml to work as expected.
   game:
-    Oblivion Remastered: 0.5.1 # Version of the world required for this yaml to work as expected.
+    Oblivion Remastered: 0.6.0 # Version of the world required for this yaml to work as expected.
 
 Oblivion Remastered:
   ################
@@ -83,6 +83,7 @@ Oblivion Remastered:
     # Light the Dragonfires: Complete the Main Quest
     # Nirnsanity: Collect Nirnroot plants and complete the Seeking Your Roots quest
     # Treasure Hunter: Collect a specific amount of gold (set by Gold Goal)
+    # Bounty Hunter: Complete all Bounty Contracts in your seed
     arena: 0
     gatecloser: 0
     shrine_seeker: 0
@@ -90,6 +91,7 @@ Oblivion Remastered:
     light_the_dragonfires: 50
     nirnsanity: 0
     treasure_hunter: 0
+    bounty_hunter: 0
 
   ##########################
   # Goal-Specific Settings #
@@ -248,12 +250,77 @@ Oblivion Remastered:
     #
     # You can define additional values between the minimum and maximum values.
     # Minimum value is 0
-    # Maximum value is 5
+    # Maximum value is 8
     2: 50
     random: 0
     random-low: 0 # random value weighted towards lower values
     random-high: 0 # random value weighted towards higher values
-    random-range-0-5: 0 # random value between 0 and 5
+    random-range-0-8: 0 # random value between 0 and 8
+
+  doomstone_checks:
+    # When true: Birthsign Doomstone checks are included for each unlocked region.
+    # When false: No doomstone location checks are added.
+    # 
+    # Ignored when regions are disabled.
+    'false': 0
+    'true': 50
+
+  black_market_checks:
+    # Highest Black Market fencing threshold included in the seed.
+    # Thresholds at or below this value become locations. 0 disables Black Market checks.
+    # 
+    # Possible checks: 50, 150, 300, 500, 1000, 2000, 3000, 4000, 5000
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 5000
+    1000: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-5000: 0 # random value between 0 and 5000
+
+  bounty_count:
+    # Number of bounty contracts generated for this seed (0-20).
+    # Bounty contracts assign specific NPCs or enemy types to kill.
+    # The first contract is granted at the start of the game. Each Progressive Bounty Contract unlocks the next.
+    # 
+    # If Goal is Bounty Hunter: Completing this number of contracts is required for victory.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 20
+    5: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-20: 0 # random value between 0 and 20
+
+  ###############
+  # Kill Checks #
+  ###############
+  weapon_lock:
+    # When true: Dungeon, overworld, and Oblivion kill checks only increment if the
+    # kill was made with a licensed weapon type. You start with a Starting Weapon
+    # license; the other licenses must be found in the world.
+    # 
+    # Does not affect bounty kills.
+    # 
+    # When false: All weapon types count.
+    'false': 50
+    'true': 0
+
+  starting_weapon:
+    # Which weapon license you start with when Weapon Lock is on.
+    # 
+    # Ignored when Weapon Lock is off.
+    blade: 0
+    blunt: 0
+    bow: 0
+    staff: 0
+    spell: 0
+    unarmed: 0
+    random_weapon: 50
 
   dungeon_kills:
     # Number of dungeon kill location checks (enemies killed in dungeon or most interior cells).
@@ -272,6 +339,18 @@ Oblivion Remastered:
     random-high: 0 # random value weighted towards higher values
     random-range-0-200: 0 # random value between 0 and 200
 
+  dungeon_kills_per_check:
+    # Enemy kills needed to award one Dungeon Kill check.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 10
+    3: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-10: 0 # random value between 1 and 10
+
   overworld_kills:
     # Number of overworld kill location checks (enemies killed in Tamriel).
     # Set to 0 to disable overworld kill checks.
@@ -289,13 +368,52 @@ Oblivion Remastered:
     random-high: 0 # random value weighted towards higher values
     random-range-0-200: 0 # random value between 0 and 200
 
-  doomstone_checks:
-    # When true: Birthsign Doomstone visit checks are included for each unlocked region.
-    # When false: No doomstone location checks are added.
+  overworld_kills_per_check:
+    # Enemy kills needed to award one Overworld Kill check.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 10
+    1: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-10: 0 # random value between 1 and 10
+
+  oblivion_kills:
+    # Number of Oblivion plane kill location checks (enemies killed inside Oblivion Gates).
+    # Set to 0 to disable Oblivion kill checks.
     # 
-    # Ignored when regions are disabled.
-    'false': 0
-    'true': 50
+    # When Gate Count is above 0: batched by Gate Key count. With 5 keys and 50 kills,
+    # checks 1-10 need 1 key, 11-20 need 2 keys, and so on.
+    # 
+    # When Goal is Light the Dragonfires: checks are batched by region unlocks, same as dungeon
+    # and overworld kills. If regions are disabled, all Oblivion kill checks
+    # are accessible immediately.
+    # 
+    # Ignored when Gate Count is 0 and Goal is not Light the Dragonfires.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 200
+    50: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-200: 0 # random value between 0 and 200
+
+  oblivion_kills_per_check:
+    # Enemy kills needed to award one Oblivion Kill check.
+    # Ignored when Oblivion Kill Checks is 0.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 10
+    2: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-10: 0 # random value between 1 and 10
 
   ################
   # Class System #
@@ -353,16 +471,16 @@ Oblivion Remastered:
     random-range-1-5: 0 # random value between 1 and 5
 
   start_with_class:
-    # When true: Start with your above selected class unlocked immediately.
+    # Where your first Progressive <Class> Level is placed.
     # 
-    # When false: You must receive the first Progressive <Class> Level in the multiworld
-    # to unlock class skill checks.
-    # 
-    # Note: Your first Class level is always located in Sphere 1. [early locations]
+    # Early: Sphere 1, any world's locations.
+    # Local Early: Sphere 1, only on this slot's locations.
+    # Start With: Start with the first class level already unlocked.
     # 
     # Ignored when Class Selection is Off.
-    'false': 50
-    'true': 0
+    early: 50
+    local_early: 0
+    start_with: 0
 
   excluded_skills:
     # Exclude specific skills from the class system.
@@ -478,8 +596,8 @@ Oblivion Remastered:
     # Early Item: Same as Item, but the Dungeon Warp item is forced into early locations
     'off': 0
     'on': 0
-    item: 50
-    early_item: 0
+    item: 0
+    early_item: 50
 
   shop_scout_type:
     # How shop item scouting displays information.
@@ -522,6 +640,24 @@ Oblivion Remastered:
     'false': 50
     'true': 0
 
+  ap_tips:
+    # Enable Archipelago tips? These will provide extra guidance on how to complete checks.
+    # This is recommended if you are unfamiliar with Archipelago or if you prefer a more guided experience.
+    'false': 50
+    'true': 0
+
+  skill_xp_multiplier:
+    # Skill XP multiplier. 1 is vanilla. 2 is double speed, 3 is triple speed, etc.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 8
+    1: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-8: 0 # random value between 1 and 8
+
   #########
   # Traps #
   #########
@@ -540,12 +676,12 @@ Oblivion Remastered:
 
   movement_trap_weight:
     # Relative weight for Movement Trap. Set to 0 to disable this trap type.
-    # By default, 60% of traps will be Movement Traps.
+    # By default, 55% of traps will be Movement Traps.
     #
     # You can define additional values between the minimum and maximum values.
     # Minimum value is 0
     # Maximum value is 100
-    60: 50
+    55: 50
     random: 0
     random-low: 0 # random value weighted towards lower values
     random-high: 0 # random value weighted towards higher values
@@ -572,6 +708,19 @@ Oblivion Remastered:
     # Minimum value is 0
     # Maximum value is 100
     10: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-100: 0 # random value between 0 and 100
+
+  wanted_trap_weight:
+    # Relative weight for Wanted Trap. Set to 0 to disable this trap type.
+    # By default, 5% of traps will be Wanted Traps.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 100
+    5: 50
     random: 0
     random-low: 0 # random value weighted towards lower values
     random-high: 0 # random value weighted towards higher values

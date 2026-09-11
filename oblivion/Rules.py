@@ -516,6 +516,37 @@ def set_rules(multiworld: MultiWorld, player: int) -> None:
             except KeyError:
                 continue
 
+    if getattr(world, "oblivion_kills", 0) > 0:
+        if world.gate_count > 0:
+            kpg = world.oblivion_kills_per_gate
+            for i in range(1, world.oblivion_kills + 1):
+                location_name = f"Oblivion Kill {i}"
+                try:
+                    loc = multiworld.get_location(location_name, player)
+                    required_keys = required_region_unlocks(i, kpg) if kpg > 0 else 1
+                    loc.access_rule = lambda state, keys=required_keys: (
+                        state.has("Oblivion Gate Key", player, keys)
+                    )
+                    if required_keys <= 1:
+                        loc.item_rule = lambda item: item.name != "Oblivion Gate Key"
+                except KeyError:
+                    continue
+        else:
+            kpr = getattr(world, "oblivion_kills_per_region", 0)
+            for i in range(1, world.oblivion_kills + 1):
+                location_name = f"Oblivion Kill {i}"
+                try:
+                    loc = multiworld.get_location(location_name, player)
+                    if region_access_items and kpr > 0:
+                        required = required_region_unlocks(i, kpr)
+                        loc.access_rule = lambda state, r=required, items=region_access_items: (
+                            sum(1 for item in items if state.has(item, player)) >= r
+                        )
+                    else:
+                        loc.access_rule = lambda state: True
+                except KeyError:
+                    continue
+
     # ===== SIDEQUEST RULES =====
     # Sidequest locations require their category's license item
     if hasattr(world, 'selected_sidequests') and world.selected_sidequests:
@@ -553,3 +584,29 @@ def set_rules(multiworld: MultiWorld, player: int) -> None:
                         location.access_rule = lambda state: state.has("Exploration Sidequest License", player)
             except KeyError:
                 continue  # Location not in this seed
+
+    # ===== BLACK MARKET =====
+    for fence_name in getattr(world, "fence_locations", []) or []:
+        try:
+            location = multiworld.get_location(fence_name, player)
+            location.access_rule = lambda state: state.has("Black Market Access", player)
+        except KeyError:
+            continue
+
+    # ===== BOUNTIES =====
+    # Contract i needs (i-1) Progressive Bounty Contracts. First is free.
+    for contract in getattr(world, "selected_bounties", []) or []:
+        required_licenses = max(0, int(contract.get("index", 1)) - 1)
+        for location_name in contract.get("locations", []):
+            try:
+                location = multiworld.get_location(location_name, player)
+                if required_licenses <= 0:
+                    location.access_rule = lambda state: True
+                else:
+                    location.access_rule = (
+                        lambda state, needed=required_licenses: state.has(
+                            "Progressive Bounty Contract", player, needed
+                        )
+                    )
+            except KeyError:
+                continue

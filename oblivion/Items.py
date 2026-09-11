@@ -311,11 +311,33 @@ item_table[greater_soulgem_package_item_name] = ItemData(current_id, ItemClassif
 useful_items.append(greater_soulgem_package_item_name)
 current_id += 1
 
-# Fire Arrow Bundle: Gives 100 fire-damage arrows
-fire_arrow_bundle_item_name = "Fire Arrow Bundle"
-item_table[fire_arrow_bundle_item_name] = ItemData(current_id, ItemClassification.useful)
-useful_items.append(fire_arrow_bundle_item_name)
+# Special Arrow Bundle
+special_arrow_bundle_item_name = "Special Arrow Bundle"
+item_table[special_arrow_bundle_item_name] = ItemData(current_id, ItemClassification.useful)
+useful_items.append(special_arrow_bundle_item_name)
 current_id += 1
+
+poisoned_apples_item_name = "Poisoned Apples"
+item_table[poisoned_apples_item_name] = ItemData(current_id, ItemClassification.useful)
+useful_items.append(poisoned_apples_item_name)
+current_id += 1
+
+legendary_detect_life_item_name = "Legendary Detect Life Scroll Bundle"
+item_table[legendary_detect_life_item_name] = ItemData(current_id, ItemClassification.useful)
+useful_items.append(legendary_detect_life_item_name)
+current_id += 1
+
+WEAPON_LICENSE_BY_CATEGORY = {
+    "blade": "Blade License",
+    "blunt": "Blunt License",
+    "bow": "Bow License",
+    "staff": "Staff License",
+    "spell": "Spell License",
+    "unarmed": "Unarmed License",
+}
+for _license_name in WEAPON_LICENSE_BY_CATEGORY.values():
+    item_table[_license_name] = ItemData(current_id, ItemClassification.useful)
+    current_id += 1
 
 # Unique Merchant Items - Organized by equipment type
 # These are unique items that are not quest rewards or faction rewards
@@ -332,6 +354,9 @@ unique_weapons = [
     "Redwave",
     "Calliben's Grim Retort",
     "Frostwyrm Bow",
+    "Bow of Burning",
+    "Bow of Infernal Frost",
+    "Shortsword of Sparks",
 ]
 
 unique_shields = [
@@ -376,6 +401,7 @@ unique_clothing = [
 
 unique_amulets = [
     "Circlet of Omnipotence",
+    "Eye of Sithis",
 ]
 
 unique_rings = [
@@ -472,12 +498,14 @@ trap_items = [
     "Movement Trap",
     "Storm Trap",
     "Spawn Trap",
+    "Wanted Trap",
 ]
 
 trap_code_map: Dict[str, str] = {
     "Movement Trap": "APMovementTrapReceived",
     "Storm Trap": "APStormTrapReceived",
     "Spawn Trap": "APSpawnTrapReceived",
+    "Wanted Trap": "APWantedTrapReceived",
 }
 
 
@@ -485,6 +513,12 @@ trap_code_map: Dict[str, str] = {
 for _trap_name in trap_items:
     item_table[_trap_name] = ItemData(current_id, ItemClassification.trap)
     current_id += 1
+
+item_table["Black Market Access"] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
+
+item_table["Progressive Bounty Contract"] = ItemData(current_id, ItemClassification.progression)
+current_id += 1
 
 # Item groups for hinting
 item_name_groups = {
@@ -496,6 +530,22 @@ item_name_groups = {
     "Progressive Septim Satchel": ["Progressive Septim Satchel"],
     "Progressive Armor Set": ["Progressive Armor Set"],
     "Progressive Class Level": progressive_class_level_items,
-    "Fortify Attribute": attribute_useful_items,
     "Region Access": region_unlock_items,
-} 
+    "Main Quest": [
+        amulet_of_kings_item_name,
+        kvatch_gate_key_item_name,
+        dagon_shrine_passphrase_item_name,
+        fort_sutch_gate_key_item_name,
+        blades_report_item_name,
+        encrypted_scroll_item_name,
+        decoded_page_daedra_item_name,
+        decoded_page_divines_item_name,
+        decoded_page_ayleid_item_name,
+        decoded_page_sigillum_item_name,
+        bruma_gate_key_item_name,
+        paradise_access_item_name,
+    ],
+    "Progressive Bounty Contract": ["Progressive Bounty Contract"],
+    "Weapon License": list(dict.fromkeys(WEAPON_LICENSE_BY_CATEGORY.values())),
+}
+ 

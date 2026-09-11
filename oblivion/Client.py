@@ -1,8 +1,12 @@
 import asyncio
+import glob
+import hashlib
+import json
 import os
 import platform
+import re
 import time
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set, Tuple
 from CommonClient import CommonContext, server_loop, gui_enabled, ClientCommandProcessor, logger, get_base_parser
 from MultiServer import mark_raw
 from NetUtils import ClientStatus
@@ -128,6 +132,77 @@ class OblivionTracker:
             return False
         checked_locations = getattr(self.ctx, 'checked_locations', set())
         return location_data.id in checked_locations
+
+    #Check for goal completion without victory -- used to catch !collect checking all remaining locations on a slot
+    #Normally, goal is sent by Oblivion when all locations are checked in-game. This offers the player a way to declare victory if the server allows !collect.
+    def is_ap_goal_satisfied(self) -> bool:
+        """True when all server-side location checks for the current goal are complete."""
+        slot_data = getattr(self.ctx, 'slot_data', {}) or {}
+        goal_key = slot_data.get("goal")
+        if not goal_key:
+            return False
+
+        if goal_key == "gatecloser":
+            gate_count = slot_data.get("gate_count_required", 5)
+            gates_closed = sum(
+                1 for i in range(1, gate_count + 1)
+                if self.is_location_checked(f"Gate {i} Closed")
+            )
+            return gates_closed >= gate_count
+
+        if goal_key == "shrine_seeker":
+            shrine_goal = slot_data.get("shrine_goal", 5)
+            active_shrines = slot_data.get("active_shrines", []) or []
+            shrine_completions = sum(
+                1 for shrine in active_shrines
+                if self.is_location_checked(f"{shrine} Quest Complete")
+            )
+            return shrine_completions >= shrine_goal
+
+        if goal_key == "arena":
+            matches_won = sum(
+                1 for i in range(1, 22)
+                if self.is_location_checked(f"Arena Match {i} Victory")
+            )
+            return matches_won >= 21
+
+        if goal_key == "light_the_dragonfires":
+            return self.is_location_checked("Light the Dragonfires")
+
+        if goal_key == "dungeon_delver":
+            selected_regions = slot_data.get("selected_regions", []) or []
+            dungeons_by_region = slot_data.get("dungeons_by_region", {}) or {}
+            checked_locations = getattr(self.ctx, 'checked_locations', set())
+            total_dungeons = 0
+            total_completed = 0
+            for region in selected_regions:
+                for dungeon in dungeons_by_region.get(region, []):
+                    total_dungeons += 1
+                    dungeon_data = Locations.location_table.get(dungeon)
+                    if dungeon_data and dungeon_data.id in checked_locations:
+                        total_completed += 1
+            return total_dungeons > 0 and total_completed >= total_dungeons
+
+        if goal_key == "nirnsanity":
+            return self.is_location_checked("Nirnsanity")
+
+        if goal_key == "treasure_hunter":
+            return self.is_location_checked("Treasure Hunter")
+
+        if goal_key == "bounty_hunter":
+            contracts = slot_data.get("selected_bounties", []) or []
+            if not contracts:
+                return False
+            for contract in contracts:
+                locations = contract.get("locations", []) or []
+                if not locations:
+                    return False
+                for location_name in locations:
+                    if not self.is_location_checked(location_name):
+                        return False
+            return True
+
+        return False
     
     def _region_batch_accessible(self, check_index: int, per_region: int, slot_data: dict) -> bool:
         """Same region-batch gate used for kill checks and non-Nirnsanity nirnroots."""
@@ -137,6 +212,57 @@ class OblivionTracker:
         required_regions = required_region_unlocks(check_index, per_region)
         regions_unlocked = sum(1 for r in selected_regions if self.has(f"{r} Access", 1))
         return regions_unlocked >= required_regions
+
+    def _bounty_contracts(self):
+        return list((getattr(self.ctx, "slot_data", {}) or {}).get("selected_bounties", []) or [])
+
+    def _bounty_display_label(self, contract):
+        index = int(contract.get("index", 0) or 0)
+        label = contract.get("display") or f"Bounty {index}"
+        try:
+            cull_need = int(contract.get("cull") or 0)
+        except (TypeError, ValueError):
+            cull_need = 0
+        if cull_need < 1 or str(cull_need) in label:
+            return label
+        if label.startswith("Cull "):
+            return f"Cull {cull_need} " + label[5:]
+        return f"{label} ({cull_need})"
+
+    def _format_bounty_location(self, location_name: str) -> str:
+        index = self._bounty_index_from_tracker_text(location_name)
+        if index is None:
+            return location_name
+        for contract in self._bounty_contracts():
+            try:
+                if int(contract.get("index", 0) or 0) != index:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            return "Bounty: " + self._bounty_display_label(contract)
+        return location_name
+
+    def _bounty_index_from_tracker_text(self, text: str):
+        if not text:
+            return None
+        inner = text[8:] if text.startswith("Bounty: ") else text
+        for contract in self._bounty_contracts():
+            try:
+                index = int(contract.get("index", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            labeled = self._bounty_display_label(contract)
+            candidates = [
+                contract.get("display"),
+                labeled,
+                f"Bounty: {contract.get('display')}",
+                f"Bounty: {labeled}",
+            ]
+            for name in list(contract.get("location_names") or []) + list(contract.get("locations") or []):
+                candidates.append(name)
+            if text in candidates or inner in candidates:
+                return index
+        return None
     
     def check_location_accessibility(self, location_name):
         """Check if a location is accessible based on the game rules."""
@@ -285,6 +411,16 @@ class OblivionTracker:
                     return self.has("Progressive Septim Satchel", 1, 5)
             except (ValueError, IndexError):
                 return False
+
+        if location_name.startswith("Black Market: ") and location_name.endswith(" Gold Fenced"):
+            return self.has("Black Market Access", 1)
+
+        bounty_index = self._bounty_index_from_tracker_text(location_name)
+        if bounty_index is not None:
+            needed = max(0, bounty_index - 1)
+            if needed <= 0:
+                return True
+            return self.has("Progressive Bounty Contract", 1, needed)
 
         # Main Quest milestone rules
         if location_name == "Deliver the Amulet":
@@ -506,23 +642,54 @@ class OblivionTracker:
             except (ValueError, IndexError):
                 return True
 
+        if location_name.startswith("Oblivion Kill "):
+            try:
+                kill_num = int(location_name.split()[-1])
+                total = slot_data.get("oblivion_kills", 0) or 0
+                if total <= 0 or kill_num > total:
+                    return False
+                gate_count = slot_data.get("gate_count", 0) or 0
+                if gate_count > 0:
+                    per_gate = slot_data.get("oblivion_kills_per_gate", 0) or 0
+                    required = required_region_unlocks(kill_num, per_gate)
+                    if required <= 0:
+                        return True
+                    return self.has("Oblivion Gate Key", 1, required)
+                per_region = slot_data.get("oblivion_kills_per_region", 0)
+                return self._region_batch_accessible(kill_num, per_region, slot_data)
+            except (ValueError, IndexError):
+                return True
+
         return True
     
     def update_locations(self):
         """Update the locations tab with accessible locations from the server."""
         if hasattr(self.ctx, 'tab_locations'):
             if not self.ctx.tracker_enabled:
-                self.ctx.tab_locations.content.data = [{"text": "Tracker disabled. Use /tracker to enable it."}]
+                self._set_tracker_rows([{"text": "Tracker disabled."}])
+                return
+
+            if getattr(self.ctx, "tracker_mode", "progress") == "progress":
+                self.update_progress_view()
                 return
 
             accessible_locations = []
+            seen_bounty_indexes = set()
             # Use server-provided missing_locations and checked_locations
             for location_id in getattr(self.ctx, 'missing_locations', set()):
                 if location_id in getattr(self.ctx, 'checked_locations', set()):
                     continue
                 location_name = self.ctx.location_names.lookup_in_game(location_id, self.ctx.game)
-                if self.check_location_accessibility(location_name):
-                    accessible_locations.append({"text": location_name})
+                if not self.check_location_accessibility(location_name):
+                    continue
+                bounty_index = self._bounty_index_from_tracker_text(location_name)
+                if bounty_index is not None:
+                    if bounty_index in seen_bounty_indexes:
+                        continue
+                    seen_bounty_indexes.add(bounty_index)
+                    accessible_locations.append({"text": self._format_bounty_location(location_name)})
+                    continue
+                accessible_locations.append({"text": location_name})
             
             # Add goal location to MQ section
             slot_goal_data = getattr(self.ctx, 'slot_data', {}) or {}
@@ -615,25 +782,38 @@ class OblivionTracker:
                         return (8, 1, text)
                     else:
                         return (8, 2, text)
+
+                # Category 8b: Black Market
+                elif text.startswith("Black Market: ") and text.endswith(" Gold Fenced"):
+                    try:
+                        amount = int(text.split()[2])
+                        return (8, 3, amount)
+                    except (ValueError, IndexError):
+                        return (8, 3, 999999, text)
                 
-                # Category 9: Kill locations
-                elif "Overworld Kill" in text or "Dungeon Kill" in text:
-                    # extract last number safely
+                # Category 9: Bounties
+                elif self._bounty_index_from_tracker_text(text) is not None:
+                    return (9, self._bounty_index_from_tracker_text(text), text)
+                
+                # Category 10: Kill locations
+                elif "Overworld Kill" in text or "Dungeon Kill" in text or "Oblivion Kill" in text:
                     num = int(text.split()[-1])
-                    
                     if "Overworld Kill" in text:
                         return (10, 0, num, text)
-                    else:  # Dungeon Kill
-                        return (10, 1, num, text)
+                    if "Oblivion Kill" in text:
+                        return (10, 2, num, text)
+                    return (10, 1, num, text)
                 
-                # Category 10: Everything else
+                # Category 11: Everything else
                 else:
-                    return (9, text)
+                    return (11, text)
             
             sorted_locations = sorted(accessible_locations, key=natural_sort_key)
             # Append (Region) to dungeon names, (gold cost) to sidequests in tracker for clarity
             for entry in sorted_locations:
                 name = entry["text"]
+                if name.startswith("Bounty: ") or self._bounty_index_from_tracker_text(name) is not None:
+                    continue
                 if name in Locations.DUNGEON_REGIONS:
                     entry["text"] = f"{name} ({Locations.DUNGEON_REGIONS[name]})"
                 elif name in self.stone_regions:
@@ -644,9 +824,590 @@ class OblivionTracker:
                         entry["text"] = f"{name} ({gold_cost} gold)"
 
             if sorted_locations:
-                self.ctx.tab_locations.content.data = sorted_locations
+                self._set_tracker_rows(sorted_locations)
             else:
-                self.ctx.tab_locations.content.data = [{"text": "All currently available locations have been checked."}]
+                self._set_tracker_rows([{"text": "All currently available locations have been checked."}])
+
+    def _tracker_log(self):
+        return getattr(self.ctx, "tab_locations_log", None) or getattr(getattr(self.ctx, "tab_locations", None), "content", None)
+
+    def _set_tracker_rows(self, rows):
+        panel = getattr(self.ctx, "tracker_panel", None)
+        if panel and hasattr(panel, "apply_rows"):
+            panel.apply_rows(rows)
+            return
+        log = self._tracker_log()
+        if log is None:
+            return
+        log.data = rows
+
+    def _progress_segments(self, loc_ids, checked) -> Tuple[int, int, int]:
+        """Return (done, in-logic remaining, locked) for a set of location ids."""
+        done = 0
+        available = 0
+        locked = 0
+        for loc_id in loc_ids:
+            if loc_id in checked:
+                done += 1
+                continue
+            name = None
+            try:
+                name = self.ctx.location_names.lookup_in_game(loc_id, self.ctx.game)
+            except Exception:
+                name = None
+            if name and self.check_location_accessibility(name):
+                available += 1
+            else:
+                locked += 1
+        return done, available, locked
+
+    def _collapse_progress_activity(self, done: int, available: int, locked: int):
+        """Treat a multi-check activity as a single 0/1 row."""
+        total = done + available + locked
+        if total <= 0:
+            return 0, 0, 0
+        if done >= total:
+            return 1, 0, 0
+        if available > 0:
+            return 0, 1, 0
+        return 0, 0, 1
+
+    def _progress_bar(self, done: int, available: int, locked: int, width: int = 28) -> str:
+        total = done + available + locked
+        if total <= 0:
+            return "-" * width
+        raw = [width * done / total, width * available / total, width * locked / total]
+        sizes = [int(v) for v in raw]
+        leftover = width - sum(sizes)
+        order = sorted(range(3), key=lambda i: raw[i] - sizes[i], reverse=True)
+        for i in range(leftover):
+            sizes[order[i % 3]] += 1
+        done_w, avail_w, locked_w = sizes
+        parts = []
+        if done_w:
+            parts.append(f"[color=FFFFFF]{'#' * done_w}[/color]")
+        if avail_w:
+            parts.append(f"[color=FFFFFF]{'-' * avail_w}[/color]")
+        if locked_w:
+            parts.append(f"[color=EE0000]{'-' * locked_w}[/color]")
+        return "".join(parts) or "-" * width
+
+    def _progress_name_width(self, bar_width: int, count_width: int):
+        panel = getattr(self.ctx, "tracker_panel", None)
+        log = getattr(panel, "log", None) if panel else None
+        width_px = float(getattr(log, "width", 0) or 0)
+        if width_px < 80:
+            return None
+        usable = int((width_px - 36) / _progress_mono_char_width())
+        return max(12, usable - bar_width - 4 - count_width)
+
+    def _format_progress_rows(self, entries: List[Tuple]) -> List[dict]:
+        goal_label = getattr(self, "_progress_goal_label", None)
+        if not any(item and item[0] == "row" for item in entries):
+            return [{"text": "No location data yet. Connect to a multiworld first."}]
+        while entries and entries[0][0] == "blank":
+            entries = entries[1:]
+        while entries and entries[-1][0] == "blank":
+            entries = entries[:-1]
+
+        formatted = []
+        for item in entries:
+            if item[0] == "blank":
+                formatted.append(None)
+                continue
+            _kind, label, done, available, locked, indent, suffix = item[:7]
+            expand_key = item[7] if len(item) > 7 else None
+            marker = ""
+            if expand_key:
+                expanded = expand_key in (getattr(self.ctx, "progress_expanded", None) or set())
+                marker = "v " if expanded else "> "
+            name = marker + ("  " * indent) + label
+            total = done + available + locked
+            count = f"{done}/{total}"
+            if suffix == "hidebar":
+                bar = ""
+                count = ""
+            elif isinstance(suffix, str) and suffix.startswith("unlocks:"):
+                count = suffix.split(":", 1)[1]
+                bar = self._progress_bar(done, available, locked)
+            else:
+                if suffix:
+                    count = f"{count} {suffix}"
+                bar = self._progress_bar(done, available, locked)
+            is_goal = indent == 0 and bool(goal_label) and label == goal_label
+            formatted.append((name, bar, count, total > 0 and done >= total, expand_key, indent, is_goal))
+
+        hide_completed = getattr(self.ctx, "progress_hide_completed", False)
+        if hide_completed:
+            visible = []
+            skip_below = None
+            for row in formatted:
+                if row is None:
+                    if skip_below is None:
+                        visible.append(None)
+                    continue
+                indent = row[5]
+                if skip_below is not None:
+                    if indent > skip_below:
+                        continue
+                    skip_below = None
+                complete, is_goal = row[3], row[6]
+                if complete and not is_goal:
+                    skip_below = indent
+                    continue
+                visible.append(row)
+            formatted = visible
+
+        bar_width = 28
+        count_width = max([len("Count")] + [len(row[2]) for row in formatted if row], default=6)
+        name_width = max([len("Content")] + [len(row[0]) for row in formatted if row], default=12)
+        line_width = int(
+            (name_width + 2 + bar_width + 2 + count_width) * _progress_mono_char_width() + 24
+        )
+
+        def mono_line(name: str, bar: str, count: str, bar_is_plain: bool = False, accent_color: str = None, name_only: bool = False) -> str:
+            padded_name = f"{name:<{name_width}}"
+            padded_count = f"{count:>{count_width}}"
+            if accent_color:
+                padded_name = f"[color={accent_color}]{padded_name}[/color]"
+                if not name_only:
+                    padded_count = f"[color={accent_color}]{padded_count}[/color]"
+            bar_field = f"{bar:<{bar_width}}" if bar_is_plain else bar
+            line = f"{padded_name}  {bar_field}  {padded_count}"
+            font = _progress_mono_font()
+            if font:
+                line = f"[font={font}]{line}[/font]"
+            return line
+
+        rows = [{
+            "text": f"[u]{mono_line('Content', 'Progress', 'Count', bar_is_plain=True)}[/u]",
+            "expand_key": None,
+            "line_width": line_width,
+            "content_width": line_width,
+        }]
+        for row in formatted:
+            if row is None:
+                rows.append({"text": "", "expand_key": None, "line_width": line_width, "content_width": line_width})
+                continue
+            name, bar, count, complete, expand_key, _indent, is_goal = row
+            if is_goal:
+                accent, name_only = "d1b347", True
+            elif complete:
+                accent, name_only = "00ff00", False
+            else:
+                accent, name_only = None, False
+            rows.append({
+                "text": mono_line(name, bar, count, accent_color=accent, name_only=name_only),
+                "expand_key": expand_key,
+                "line_width": line_width,
+                "content_width": line_width,
+            })
+        return rows
+
+    def _seed_location_entries(self):
+        entries = []
+        loc_ids = set(getattr(self.ctx, "checked_locations", set()) or []) | set(getattr(self.ctx, "missing_locations", set()) or [])
+        for loc_id in loc_ids:
+            try:
+                name = self.ctx.location_names.lookup_in_game(loc_id, self.ctx.game)
+            except Exception:
+                name = None
+            if name:
+                entries.append((loc_id, name))
+        return entries
+
+    def _region_is_unlocked(self, region: str, slot_data: dict) -> bool:
+        starting_unlocked = set(slot_data.get("starting_unlocked_regions", []) or [])
+        return region in starting_unlocked or self.items.get(f"{region} Access", 0) > 0
+
+    def update_progress_view(self):
+        """Fill the Tracker tab with overall check progress by content type."""
+        if not hasattr(self.ctx, "tab_locations"):
+            return
+
+        mq_names = set(Locations.mq_chapter_1_locations + Locations.mq_chapter_2_locations + Locations.mq_chapter_3_locations)
+        shrine_names = {f"{name} Quest Complete" for name in Items.shrine_names}
+        sidequest_names = set(Locations.WEALTH_SIDEQUESTS + Locations.EXPLORATION_SIDEQUESTS)
+
+        buckets = {
+            "Main Quest": [],
+            "Daedric Shrines": [],
+            "Arena": [],
+            "Oblivion Gates": [],
+            "Dungeons": [],
+            "Doomstones": [],
+            "Innkeeper Items": [],
+            "Class Skills": [],
+            "Nirnroot": [],
+            "Gold": [],
+            "Sidequests": [],
+            "Kills": [],
+            "Overworld Kills": [],
+            "Dungeon Kills": [],
+            "Oblivion Kills": [],
+            "Black Market": [],
+            "Bounties": [],
+        }
+        region_checks = {}
+        shrine_ids_by_name = {}
+        mq_ids_by_name = {}
+        skill_ids_by_name = {}
+        bounty_ids_by_index = {}
+        dungeon_ids_by_name = {}
+        doomstone_ids_by_name = {}
+
+        checked = set(getattr(self.ctx, "checked_locations", set()) or [])
+        for loc_id, name in self._seed_location_entries():
+            region = Locations.DUNGEON_REGIONS.get(name) or Locations.DOOMSTONE_REGIONS.get(name)
+            if region:
+                region_checks.setdefault(region, []).append(loc_id)
+
+            if name in mq_names or name == "Light the Dragonfires":
+                if name in mq_names:
+                    buckets["Main Quest"].append(loc_id)
+                mq_ids_by_name[name] = loc_id
+            elif name in shrine_names:
+                buckets["Daedric Shrines"].append(loc_id)
+                shrine_ids_by_name[name] = loc_id
+            elif name.startswith("Arena Match ") and name.endswith(" Victory"):
+                buckets["Arena"].append(loc_id)
+            elif name.startswith("Gate ") and name.endswith(" Closed") and name not in mq_names:
+                buckets["Oblivion Gates"].append(loc_id)
+            elif name in Locations.DUNGEON_REGIONS:
+                buckets["Dungeons"].append(loc_id)
+                dungeon_ids_by_name[name] = loc_id
+            elif name in Locations.DOOMSTONE_REGIONS:
+                buckets["Doomstones"].append(loc_id)
+                doomstone_ids_by_name[name] = loc_id
+            elif name.startswith("Innkeeper Shop Item Value "):
+                buckets["Innkeeper Items"].append(loc_id)
+            elif " Skill Increase " in name:
+                buckets["Class Skills"].append(loc_id)
+                skill_ids_by_name.setdefault(name.split(" Skill Increase ")[0], []).append(loc_id)
+            elif name.startswith("Nirnroot ") and name.endswith(" Harvested"):
+                buckets["Nirnroot"].append(loc_id)
+            elif name.startswith("Gold: ") and name.endswith(" Collected"):
+                buckets["Gold"].append(loc_id)
+            elif name in sidequest_names:
+                buckets["Sidequests"].append(loc_id)
+            elif name.startswith("Dungeon Kill "):
+                buckets["Kills"].append(loc_id)
+                buckets["Dungeon Kills"].append(loc_id)
+            elif name.startswith("Overworld Kill "):
+                buckets["Kills"].append(loc_id)
+                buckets["Overworld Kills"].append(loc_id)
+            elif name.startswith("Oblivion Kill "):
+                buckets["Kills"].append(loc_id)
+                buckets["Oblivion Kills"].append(loc_id)
+            elif name.startswith("Black Market: "):
+                buckets["Black Market"].append(loc_id)
+            else:
+                bounty_index = self._bounty_index_from_tracker_text(name)
+                if bounty_index is not None:
+                    buckets["Bounties"].append(loc_id)
+                    bounty_ids_by_index.setdefault(bounty_index, []).append(loc_id)
+
+        slot_data = getattr(self.ctx, "slot_data", {}) or {}
+        selected_regions = list(slot_data.get("selected_regions", []) or [])
+        using_regions = bool(selected_regions)
+        expanded = getattr(self.ctx, "progress_expanded", None) or set()
+        expand_keys = set()
+        goal_key = slot_data.get("goal")
+        goal_label = {
+            "light_the_dragonfires": "Main Quest",
+            "shrine_seeker": "Daedric Shrines",
+            "arena": "Arena",
+            "gatecloser": "Oblivion Gates",
+            "dungeon_delver": "Regions",
+            "nirnsanity": "Nirnroot",
+            "treasure_hunter": "Gold",
+            "bounty_hunter": "Bounties",
+        }.get(goal_key)
+        self._progress_goal_label = goal_label
+
+        def append_bucket(label):
+            loc_ids = buckets.get(label, [])
+            if not loc_ids:
+                return
+            done, available, locked = self._progress_segments(loc_ids, checked)
+            entries.append(("row", label, done, available, locked, 0, "", None))
+
+        def _visible_child(loc_id):
+            if loc_id in checked:
+                return True
+            try:
+                name = self.ctx.location_names.lookup_in_game(loc_id, self.ctx.game)
+            except Exception:
+                name = None
+            return bool(name and self.check_location_accessibility(name))
+
+        def append_main_quest():
+            loc_ids = buckets.get("Main Quest", [])
+            if not loc_ids and "Light the Dragonfires" not in mq_ids_by_name:
+                return
+            done, available, locked = self._progress_segments(loc_ids, checked)
+            children = []
+            mq_order = [
+                "Deliver the Amulet",
+                "Breaking the Siege of Kvatch: Gate Closed",
+                "Breaking the Siege of Kvatch",
+                "Battle for Castle Kvatch",
+                "Find the Heir",
+                "Weynon Priory",
+                "The Path of Dawn: Acquire Commentaries Vol I",
+                "The Path of Dawn: Acquire Commentaries Vol II",
+                "The Path of Dawn: Acquire Commentaries Vol III",
+                "The Path of Dawn: Acquire Commentaries Vol IV",
+                "The Path of Dawn",
+                "Dagon Shrine: Mysterium Xarxes Acquired",
+                "Dagon Shrine: Kill Harrow",
+                "Dagon Shrine",
+                "Attack on Fort Sutch",
+                "Spies: Kill Saveri Faram",
+                "Spies: Kill Jearl",
+                "Spies",
+                "Blood of the Daedra",
+                "Blood of the Divines: Free Spirit 1",
+                "Blood of the Divines: Free Spirit 2",
+                "Blood of the Divines: Free Spirit 3",
+                "Blood of the Divines: Free Spirit 4",
+                "Blood of the Divines: Armor of Tiber Septim",
+                "Blood of the Divines",
+                "Bruma Gate",
+                "Miscarcand: Great Welkynd Stone",
+                "Miscarcand",
+                "Defense of Bruma",
+                "Great Gate",
+                "Paradise: Bands of the Chosen Acquired",
+                "Paradise: Bands of the Chosen Removed",
+                "Paradise",
+                "Light the Dragonfires",
+            ]
+            for name in mq_order:
+                loc_id = mq_ids_by_name.get(name)
+                label = "[Goal] Light the Dragonfires" if name == "Light the Dragonfires" else name
+                if loc_id is not None:
+                    if not _visible_child(loc_id):
+                        continue
+                    child_done, child_available, child_locked = self._progress_segments([loc_id], checked)
+                    children.append(("row", label, child_done, child_available, child_locked, 1, "", None))
+                    continue
+                if name == "Light the Dragonfires" and goal_key == "light_the_dragonfires":
+                    if self.check_location_accessibility("Light the Dragonfires"):
+                        children.append(("row", label, 0, 1, 0, 1, "", None))
+            expand_key = "main_quest" if children else None
+            if expand_key:
+                expand_keys.add(expand_key)
+            entries.append(("row", "Main Quest", done, available, locked, 0, "", expand_key))
+            if expand_key and expand_key in expanded:
+                entries.extend(children)
+
+        def append_shrines():
+            loc_ids = buckets.get("Daedric Shrines", [])
+            if not loc_ids:
+                return
+            done, available, locked = self._progress_segments(loc_ids, checked)
+            children = []
+            for name in sorted(shrine_ids_by_name):
+                loc_id = shrine_ids_by_name[name]
+                if not _visible_child(loc_id):
+                    continue
+                child_done, child_available, child_locked = self._progress_segments([loc_id], checked)
+                label = name.replace(" Quest Complete", "")
+                children.append(("row", label, child_done, child_available, child_locked, 1, "", None))
+            expand_key = "shrines" if children else None
+            if expand_key:
+                expand_keys.add(expand_key)
+            entries.append(("row", "Daedric Shrines", done, available, locked, 0, "", expand_key))
+            if expand_key and expand_key in expanded:
+                entries.extend(children)
+
+        def append_class_skills():
+            loc_ids = buckets.get("Class Skills", [])
+            if not loc_ids:
+                return
+            done, available, locked = self._progress_segments(loc_ids, checked)
+            class_skills = list(slot_data.get("class_skills", []) or [])
+            children = []
+            for skill in class_skills:
+                skill_ids = skill_ids_by_name.get(skill, [])
+                if not skill_ids:
+                    continue
+                visible_ids = [loc_id for loc_id in skill_ids if _visible_child(loc_id)]
+                if not visible_ids:
+                    continue
+                child_done, child_available, child_locked = self._progress_segments(visible_ids, checked)
+                children.append(("row", skill, child_done, child_available, child_locked, 1, "", None))
+            expand_key = "class_skills" if children else None
+            if expand_key:
+                expand_keys.add(expand_key)
+            entries.append(("row", "Class Skills", done, available, locked, 0, "", expand_key))
+            if expand_key and expand_key in expanded:
+                entries.extend(children)
+
+        def append_bounties():
+            contracts = list(slot_data.get("selected_bounties", []) or [])
+            if not contracts:
+                contracts = [{"index": index} for index in sorted(bounty_ids_by_index)]
+            if not contracts:
+                return
+            have_contracts = self.items.get("Progressive Bounty Contract", 0)
+            rank = 1 + have_contracts if contracts else 0
+            children = []
+            done = available = locked = 0
+            for contract in contracts:
+                index = int(contract.get("index", 0) or 0)
+                child_ids = bounty_ids_by_index.get(index, [])
+                if child_ids:
+                    child_done, child_available, child_locked = self._collapse_progress_activity(
+                        *self._progress_segments(child_ids, checked)
+                    )
+                else:
+                    child_done, child_available, child_locked = 0, 0, 1
+                done += child_done
+                available += child_available
+                locked += child_locked
+                label = self._bounty_display_label(contract)
+                finished = child_done > 0 and child_available == 0 and child_locked == 0
+                if finished or index <= rank:
+                    children.append(("row", label, child_done, child_available, child_locked, 1, "", None))
+            expand_key = "bounties" if children else None
+            if expand_key:
+                expand_keys.add(expand_key)
+            entries.append(("row", "Bounties", done, available, locked, 0, "", expand_key))
+            if expand_key and expand_key in expanded:
+                entries.extend(children)
+
+        def append_kills():
+            loc_ids = buckets.get("Kills", [])
+            if not loc_ids:
+                return
+            done, available, locked = self._progress_segments(loc_ids, checked)
+            children = []
+            for child_label, child_ids in (
+                ("Overworld", buckets.get("Overworld Kills", [])),
+                ("Dungeon", buckets.get("Dungeon Kills", [])),
+                ("Oblivion", buckets.get("Oblivion Kills", [])),
+            ):
+                if not child_ids:
+                    continue
+                child_done, child_available, child_locked = self._progress_segments(child_ids, checked)
+                children.append(("row", child_label, child_done, child_available, child_locked, 1, "", None))
+            expand_key = "kills" if children else None
+            if expand_key:
+                expand_keys.add(expand_key)
+            entries.append(("row", "Kills", done, available, locked, 0, "", expand_key))
+            if expand_key and expand_key in expanded:
+                entries.extend(children)
+
+        def append_regions_block():
+            if not using_regions:
+                return
+            check_done = available = locked = 0
+            unlocked_count = 0
+            children = []
+            dungeons_by_region = slot_data.get("dungeons_by_region", {}) or {}
+            for region in sorted(selected_regions):
+                loc_ids = region_checks.get(region, [])
+                r_done, r_avail, r_locked = self._progress_segments(loc_ids, checked) if loc_ids else (0, 0, 0)
+                is_unlocked = self._region_is_unlocked(region, slot_data)
+                if is_unlocked:
+                    unlocked_count += 1
+                    check_done += r_done
+                    available += r_avail
+                    locked += r_locked
+                else:
+                    locked += r_done + r_avail + r_locked
+                if not is_unlocked or not loc_ids:
+                    continue
+                region_key = f"region:{region}"
+                nested = []
+                for dungeon_name in dungeons_by_region.get(region, []) or []:
+                    loc_id = dungeon_ids_by_name.get(dungeon_name)
+                    if loc_id is None:
+                        continue
+                    child_done, child_available, child_locked = self._progress_segments([loc_id], checked)
+                    nested.append(("row", dungeon_name, child_done, child_available, child_locked, 2, "", None))
+                for stone_name, stone_region in Locations.DOOMSTONE_REGIONS.items():
+                    if stone_region != region:
+                        continue
+                    loc_id = doomstone_ids_by_name.get(stone_name)
+                    if loc_id is None:
+                        continue
+                    child_done, child_available, child_locked = self._progress_segments([loc_id], checked)
+                    nested.append(("row", stone_name.replace("Visit the ", ""), child_done, child_available, child_locked, 2, "", None))
+                children.append(("row", region, r_done, r_avail, r_locked, 1, "", region_key if nested else None))
+                if nested:
+                    expand_keys.add(region_key)
+                if nested and region_key in expanded:
+                    children.extend(nested)
+            expand_key = "regions" if children else None
+            if expand_key:
+                expand_keys.add(expand_key)
+            region_total = len(selected_regions)
+            entries.append((
+                "row",
+                "Regions",
+                check_done,
+                available,
+                locked,
+                0,
+                f"unlocks:{unlocked_count}/{region_total}",
+                expand_key,
+            ))
+            if expand_key and expand_key in expanded:
+                entries.extend(children)
+            append_kills()
+
+        entries = []
+        if goal_label == "Regions":
+            append_regions_block()
+        elif goal_label == "Daedric Shrines":
+            append_shrines()
+        elif goal_label == "Main Quest":
+            append_main_quest()
+        elif goal_label == "Bounties":
+            append_bounties()
+        elif goal_label:
+            append_bucket(goal_label)
+
+        static_order = [
+            "Main Quest",
+            "Daedric Shrines",
+            "Arena",
+            "Oblivion Gates",
+            "Innkeeper Items",
+            "Class Skills",
+            "Nirnroot",
+            "Gold",
+            "Sidequests",
+            "Black Market",
+            "Bounties",
+        ]
+        for label in static_order:
+            if label == goal_label:
+                continue
+            if label == "Main Quest":
+                append_main_quest()
+            elif label == "Daedric Shrines":
+                append_shrines()
+            elif label == "Class Skills":
+                append_class_skills()
+            elif label == "Bounties":
+                append_bounties()
+            else:
+                append_bucket(label)
+
+        if using_regions:
+            if goal_label != "Regions":
+                append_regions_block()
+        else:
+            append_bucket("Dungeons")
+            append_bucket("Doomstones")
+            append_kills()
+
+        self.ctx.progress_expand_keys = expand_keys
+        self._set_tracker_rows(self._format_progress_rows(entries))
 
     def _shop_get_location_id(self, value: int):
         loc_name = f"Innkeeper Shop Item Value {value}"
@@ -1001,7 +1762,7 @@ class OblivionTracker:
         elif goal_key == "arena":
             # Arena: Show Progressive Arena Rank progress and matches won
             arena_rank_count = self.items.get("Progressive Arena Rank", 0)
-            ranks = ["Pit Dog", "Brawler", "Bloodletter", "Myrmidon", "Warrior", "Gladiator", "Hero", "Grand Champion"]
+            ranks = ["Pit Dog", "Brawler", "Bloodletter", "Myrmidon", "Warrior", "Gladiator", "Hero"]
             
             # Count arena matches won from checked_locations
             matches_won = 0
@@ -1291,6 +2052,40 @@ class OblivionTracker:
                     out_rows.append({"text": f"Need capacity of {gold_goal:,} (currently Unlimited)"})
                 else:
                     out_rows.append({"text": f"Need capacity of {gold_goal:,} (currently {int(current_capacity):,})"})
+
+        elif goal_key == "bounty_hunter":
+            contracts = list(slot_data.get("selected_bounties", []) or [])
+            have_contracts = self.items.get("Progressive Bounty Contract", 0)
+            rank = 1 + have_contracts if contracts else 0
+
+            completed_contracts = 0
+            visible_rows = []
+            for contract in contracts:
+                locations = contract.get("locations", []) or []
+                done = sum(1 for loc in locations if self.is_location_checked(loc))
+                label = self._bounty_display_label(contract)
+                finished = bool(locations) and done >= len(locations)
+                if finished:
+                    completed_contracts += 1
+                try:
+                    index = int(contract.get("index", 0) or 0)
+                except (TypeError, ValueError):
+                    index = 0
+                if finished or index <= rank:
+                    if finished:
+                        visible_rows.append({"text": f"[color=00ff00]{label}: {done}/{len(locations)}[/color]"})
+                    else:
+                        visible_rows.append({"text": f"{label}: {done}/{len(locations)}"})
+
+            out_rows.append({"text": f"[b]Bounty Contracts:[/b] {completed_contracts}/{len(contracts)} complete"})
+            out_rows.append({"text": ""})
+            out_rows.extend(visible_rows)
+            needed_contracts = max(0, len(contracts) - 1)
+            out_rows.append({"text": ""})
+            if contracts and completed_contracts >= len(contracts):
+                out_rows.append({"text": "[color=00ff00]Goal Complete![/color]"})
+            elif have_contracts >= needed_contracts and contracts:
+                out_rows.append({"text": "[color=FFD700][b]GO MODE — Finish every bounty contract to win![/b][/color]"})
         
         else:
             out_rows.append({"text": "Unknown goal type."})
@@ -1320,12 +2115,70 @@ class OblivionTracker:
         return self.items.get(item, 0)
 
 
+PLUGIN_ESP_NAME = "Archipelago_Oblivion.esp"
+_STEAM_APP_ID = "2623190"
+_PROGRESS_MONO_FONT = None
+_PROGRESS_MONO_CHAR_WIDTH = None
+
+
+def _progress_mono_font() -> str:
+    """Monospace font for lining up progress columns."""
+    global _PROGRESS_MONO_FONT
+    if _PROGRESS_MONO_FONT is not None:
+        return _PROGRESS_MONO_FONT
+    _PROGRESS_MONO_FONT = ""
+    try:
+        from kivy.core.text import LabelBase
+    except Exception:
+        return _PROGRESS_MONO_FONT
+    candidates = []
+    try:
+        import kivymd
+        candidates.append(os.path.join(os.path.dirname(kivymd.__file__), "fonts", "RobotoMono-Regular.ttf"))
+    except Exception:
+        pass
+    windir = os.environ.get("WINDIR", r"C:\Windows")
+    candidates.extend([
+        os.path.join(windir, "Fonts", "consola.ttf"),
+        os.path.join(windir, "Fonts", "cour.ttf"),
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+    ])
+    for path in candidates:
+        if not path or not os.path.isfile(path):
+            continue
+        try:
+            LabelBase.register(name="APTrackerMono", fn_regular=path)
+            _PROGRESS_MONO_FONT = "APTrackerMono"
+            return _PROGRESS_MONO_FONT
+        except Exception:
+            continue
+    return _PROGRESS_MONO_FONT
+
+
+def _progress_mono_char_width() -> float:
+    """Pixel width of one monospace tracker character, for live wrap-to-window."""
+    global _PROGRESS_MONO_CHAR_WIDTH
+    if _PROGRESS_MONO_CHAR_WIDTH:
+        return _PROGRESS_MONO_CHAR_WIDTH
+    try:
+        from kivy.core.text import Label as CoreLabel
+        sample = CoreLabel(text="0", font_name=_progress_mono_font() or "Roboto", font_size=20)
+        sample.refresh()
+        width = float((sample.texture.size or (0, 0))[0] or 0)
+        if width > 0:
+            _PROGRESS_MONO_CHAR_WIDTH = width
+            return width
+    except Exception:
+        pass
+    _PROGRESS_MONO_CHAR_WIDTH = 8.0
+    return _PROGRESS_MONO_CHAR_WIDTH
+
+
 def _find_proton_save_path():
     """Auto-detect Oblivion save path in Proton prefix (Linux)."""
-    import glob
-    
     # The unique Proton path signature for Oblivion Remastered (2623190 is the Steam App ID)
-    pattern = "steamapps/compatdata/2623190/pfx/drive_c/users/steamuser/Documents/My Games/Oblivion Remastered/Saved"
+    pattern = f"steamapps/compatdata/{_STEAM_APP_ID}/pfx/drive_c/users/steamuser/Documents/My Games/Oblivion Remastered/Saved"
     
     # Search common Steam library locations
     home = os.path.expanduser("~")
@@ -1375,6 +2228,650 @@ def _load_path_override(default_path: str) -> tuple[str, str]:
     return custom_path, f"Path override loaded: {custom_path}"
 
 
+def _default_archipelago_dir() -> str:
+    if platform.system() == "Windows":
+        return os.path.join(
+            os.environ.get("USERPROFILE", ""),
+            "Documents", "My Games", "Oblivion Remastered", "Saved", "Archipelago"
+        )
+    detected = _find_proton_save_path()
+    if detected:
+        return detected
+    return os.path.join(os.path.expanduser("~"), ".config", "Archipelago", "oblivion")
+
+
+def _read_text_unknown_encoding(path: str) -> str:
+    with open(path, "rb") as f:
+        raw = f.read()
+    if raw.startswith(b"\xff\xfe"):
+        return raw.decode("utf-16")
+    if raw.startswith(b"\xfe\xff"):
+        return raw.decode("utf-16-be")
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw.decode("utf-8-sig")
+    return raw.decode("utf-8", errors="replace")
+
+
+def _line_listed(text: str, value: str) -> bool:
+    needle = value.strip().lower()
+    return any(line.strip().lower() == needle for line in text.splitlines())
+
+
+def _text_contains(text: str, value: str) -> bool:
+    return value.lower() in text.lower()
+
+
+def _is_oblivion_game_path(path: str) -> bool:
+    return bool(path) and os.path.isdir(os.path.join(path, "OblivionRemastered"))
+
+
+def _windows_steam_libraries() -> List[str]:
+    libraries = []
+    steam_roots = [
+        os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Steam"),
+        os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Steam"),
+        r"C:\Steam",
+        r"C:\SteamLibrary",
+        r"D:\Steam",
+        r"D:\SteamLibrary",
+        r"D:\Program Files (x86)\Steam",
+        r"D:\Program Files\Steam",
+    ]
+    try:
+        import winreg
+        for hive, key_path in (
+            (winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam"),
+        ):
+            try:
+                with winreg.OpenKey(hive, key_path) as key:
+                    steam_path, _ = winreg.QueryValueEx(key, "SteamPath")
+                    if steam_path:
+                        steam_roots.insert(0, steam_path)
+            except OSError:
+                continue
+    except Exception:
+        pass
+
+    seen = set()
+    for root in steam_roots:
+        if not root:
+            continue
+        root = os.path.normpath(root)
+        key = root.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        libraries.append(root)
+        vdf = os.path.join(root, "steamapps", "libraryfolders.vdf")
+        if not os.path.isfile(vdf):
+            continue
+        try:
+            text = _read_text_unknown_encoding(vdf)
+        except Exception:
+            continue
+        for match in re.finditer(r'"path"\s+"([^"]+)"', text):
+            lib = os.path.normpath(match.group(1).replace("\\\\", "\\"))
+            lib_key = lib.lower()
+            if lib_key not in seen:
+                seen.add(lib_key)
+                libraries.append(lib)
+    return libraries
+
+
+def _find_oblivion_game_path() -> Optional[str]:
+    candidates: List[str] = []
+    if platform.system() == "Windows":
+        try:
+            import winreg
+            uninstall = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App {_STEAM_APP_ID}"
+            for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                for key_path in (uninstall, rf"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Steam App {_STEAM_APP_ID}"):
+                    try:
+                        with winreg.OpenKey(hive, key_path) as key:
+                            install_path, _ = winreg.QueryValueEx(key, "InstallLocation")
+                            if install_path:
+                                candidates.append(install_path)
+                    except OSError:
+                        continue
+        except Exception:
+            pass
+        for library in _windows_steam_libraries():
+            candidates.append(os.path.join(library, "steamapps", "common", "Oblivion Remastered"))
+    else:
+        home = os.path.expanduser("~")
+        candidates.extend([
+            os.path.join(home, ".local", "share", "Steam", "steamapps", "common", "Oblivion Remastered"),
+            os.path.join(home, ".steam", "steam", "steamapps", "common", "Oblivion Remastered"),
+            os.path.join(home, ".steam", "root", "steamapps", "common", "Oblivion Remastered"),
+            os.path.join(home, ".steam", "debian-installation", "steamapps", "common", "Oblivion Remastered"),
+            os.path.join(home, ".var", "app", "com.valvesoftware.Steam", ".local", "share", "Steam", "steamapps", "common", "Oblivion Remastered"),
+            os.path.join(home, "snap", "steam", "common", ".local", "share", "Steam", "steamapps", "common", "Oblivion Remastered"),
+        ])
+        for extra in glob.glob("/mnt/*/steamapps/common/Oblivion Remastered") + glob.glob("/media/*/steamapps/common/Oblivion Remastered"):
+            candidates.append(extra)
+
+    seen = set()
+    for path in candidates:
+        if not path:
+            continue
+        normalized = os.path.normpath(path)
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if _is_oblivion_game_path(normalized):
+            return normalized
+    return None
+
+
+def _find_plugins_file(game_path: str) -> Optional[str]:
+    data_dir = os.path.join(game_path, "OblivionRemastered", "Content", "Dev", "ObvData", "Data")
+    for name in ("plugins.txt", "Plugins.txt"):
+        path = os.path.join(data_dir, name)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _ini_unquote(value: str) -> str:
+    value = value.strip()
+    byte_array = re.match(r"^@ByteArray\((.*)\)$", value)
+    if byte_array:
+        value = byte_array.group(1)
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    return value.replace("\\\\", "\\")
+
+
+def _ini_lookup(text: str, key: str) -> Optional[str]:
+    pattern = re.compile(rf"^\s*{re.escape(key)}\s*=\s*(.*)$", re.IGNORECASE | re.MULTILINE)
+    match = pattern.search(text)
+    if not match:
+        return None
+    return _ini_unquote(match.group(1).strip())
+
+
+def _same_path(left: str, right: str) -> bool:
+    try:
+        return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
+    except Exception:
+        return False
+
+
+def _iter_mo2_ini_paths() -> List[str]:
+    found: List[str] = []
+    seen = set()
+
+    def add(path: str):
+        if not path or not os.path.isfile(path):
+            return
+        key = os.path.normcase(os.path.abspath(path))
+        if key in seen:
+            return
+        seen.add(key)
+        found.append(path)
+
+    localappdata = os.environ.get("LOCALAPPDATA", "")
+    if localappdata:
+        for ini in glob.glob(os.path.join(localappdata, "ModOrganizer", "*", "ModOrganizer.ini")):
+            add(ini)
+    roaming = os.environ.get("APPDATA", "")
+    if roaming:
+        for ini in glob.glob(os.path.join(roaming, "ModOrganizer", "*", "ModOrganizer.ini")):
+            add(ini)
+    return found
+
+
+def _mo2_instance_from_ini(ini_path: str) -> Optional[dict]:
+    try:
+        text = _read_text_unknown_encoding(ini_path)
+    except Exception:
+        return None
+    root = os.path.dirname(ini_path)
+    profile = _ini_lookup(text, "selected_profile") or "Default"
+    game_path = _ini_lookup(text, "gamePath") or ""
+    mods_dir = os.path.join(root, "mods")
+    profiles_dir = os.path.join(root, "profiles")
+    custom_mods = _ini_lookup(text, "mod_directory")
+    custom_profiles = _ini_lookup(text, "profiles_directory")
+    if custom_mods:
+        mods_dir = custom_mods if os.path.isabs(custom_mods) else os.path.join(root, custom_mods)
+    if custom_profiles:
+        profiles_dir = custom_profiles if os.path.isabs(custom_profiles) else os.path.join(root, custom_profiles)
+    return {
+        "root": root,
+        "ini": ini_path,
+        "profile": profile,
+        "game_path": game_path,
+        "mods_dir": mods_dir,
+        "profile_dir": os.path.join(profiles_dir, profile),
+        "overwrite": os.path.join(root, "overwrite"),
+    }
+
+
+def _find_mo2_instance(game_path: str) -> Optional[dict]:
+    if not game_path:
+        return None
+
+    candidates = []
+    current = os.path.abspath(game_path)
+    for _ in range(8):
+        ini = os.path.join(current, "ModOrganizer.ini")
+        if os.path.isfile(ini):
+            instance = _mo2_instance_from_ini(ini)
+            if instance:
+                return instance
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+
+    for ini in _iter_mo2_ini_paths():
+        instance = _mo2_instance_from_ini(ini)
+        if not instance:
+            continue
+        candidates.append(instance)
+        if instance["game_path"] and _same_path(instance["game_path"], game_path):
+            return instance
+
+    game_name = os.path.basename(os.path.normpath(game_path)).lower()
+    for instance in candidates:
+        if game_name and game_name in os.path.basename(instance["root"]).lower():
+            return instance
+        if game_name and game_name in (instance["game_path"] or "").lower():
+            return instance
+    return None
+
+
+def _mo2_enabled_mod_names(profile_dir: str) -> Optional[Set[str]]:
+    modlist = os.path.join(profile_dir, "modlist.txt")
+    if not os.path.isfile(modlist):
+        return None
+    try:
+        text = _read_text_unknown_encoding(modlist)
+    except Exception:
+        return None
+    enabled = set()
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("+") and len(line) > 1:
+            enabled.add(line[1:].strip().lower())
+    return enabled
+
+
+def _mo2_search_file(instance: dict, relative_parts: Tuple[str, ...]) -> Optional[str]:
+    relative = os.path.join(*relative_parts)
+    overwrite = os.path.join(instance["overwrite"], relative)
+    if os.path.isfile(overwrite):
+        return overwrite
+    mods_dir = instance["mods_dir"]
+    if not os.path.isdir(mods_dir):
+        return None
+    enabled = _mo2_enabled_mod_names(instance["profile_dir"])
+    try:
+        mod_names = os.listdir(mods_dir)
+    except OSError:
+        return None
+    for mod_name in mod_names:
+        if enabled is not None and mod_name.lower() not in enabled:
+            continue
+        candidate = os.path.join(mods_dir, mod_name, relative)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _mo2_plugins_file(instance: dict) -> Optional[str]:
+    profile_dir = instance["profile_dir"]
+    for name in ("plugins.txt", "Plugins.txt"):
+        path = os.path.join(profile_dir, name)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _path_writable(path: str) -> Tuple[bool, str]:
+    try:
+        os.makedirs(path, exist_ok=True)
+        test_file = os.path.join(path, ".ap_write_test")
+        with open(test_file, "w", encoding="utf-8") as f:
+            f.write("test")
+        os.remove(test_file)
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def _collect_related_log_folders(active_path: str) -> List[str]:
+    folders = []
+    seen = set()
+
+    def add(path: str):
+        if not path:
+            return
+        real = os.path.abspath(path)
+        key = os.path.normcase(real)
+        if key in seen:
+            return
+        seen.add(key)
+        folders.append(real)
+
+    add(active_path)
+    add(_default_archipelago_dir())
+    if platform.system() == "Windows":
+        userprofile = os.environ.get("USERPROFILE", "")
+        add(os.path.join(userprofile, "OneDrive", "Documents", "My Games", "Oblivion Remastered", "Saved", "Archipelago"))
+        add(os.path.join(userprofile, "OneDrive", "Documents", "My Games", "Oblivion Remastered", "OBSE", "Logs"))
+        add(os.path.join(userprofile, "Documents", "My Games", "Oblivion Remastered", "OBSE", "Logs"))
+    else:
+        proton_saved = _find_proton_save_path()
+        if proton_saved:
+            add(proton_saved)
+            add(os.path.join(os.path.dirname(proton_saved), "..", "OBSE", "Logs"))
+    return folders
+
+
+def _diagnose_oblivion_setup(ctx) -> List[str]:
+    lines: List[str] = []
+    problems = 0
+    active_path = getattr(ctx, "oblivion_save_path", "") or _default_archipelago_dir()
+    default_path = _default_archipelago_dir()
+    connected = bool(getattr(ctx, "slot_data", None))
+    file_prefix = getattr(ctx, "file_prefix", "") or ""
+
+    def ok(message: str):
+        lines.append(f"  [OK] {message}")
+
+    def problem(message: str, fix: str = ""):
+        nonlocal problems
+        problems += 1
+        lines.append(f"  [PROBLEM] {message}")
+        if fix:
+            lines.append(f"           {fix}")
+
+    def info(message: str):
+        lines.append(f"  {message}")
+
+    lines.append("======== Oblivion /helpme ========")
+    lines.append("")
+    lines.append("ACTIVE FOLDERS")
+    info(f"Archipelago files: {os.path.abspath(active_path)}")
+    if os.path.normcase(os.path.abspath(active_path)) != os.path.normcase(os.path.abspath(default_path)):
+        info(f"Default Archipelago folder: {os.path.abspath(default_path)}")
+        override_file = os.path.join(default_path, "path_override.txt")
+        if os.path.isfile(override_file):
+            info("A path_override.txt is redirecting the client to the active folder above.")
+
+    debug_log = os.path.join(active_path, "archipelago_debug.log")
+    if os.path.isfile(debug_log):
+        info(f"In-game debug log: {debug_log}")
+    else:
+        info(f"In-game debug log (created after you launch the game): {debug_log}")
+
+    try:
+        from Utils import user_path
+        ap_logs = user_path("logs")
+        if os.path.isdir(ap_logs):
+            info(f"Archipelago client logs: {ap_logs}")
+    except Exception:
+        pass
+
+    game_path = _find_oblivion_game_path()
+    if game_path:
+        info(f"Game install: {game_path}")
+        ue4ss_log = os.path.join(game_path, "OblivionRemastered", "Binaries", "Win64", "ue4ss", "ue4ss.log")
+        info(f"UE4SS log: {ue4ss_log}")
+        if not os.path.isfile(ue4ss_log):
+            info("UE4SS log is created after you launch the game with obse64_loader.exe.")
+    else:
+        info("Game install: not found.")
+        info("UE4SS log is ue4ss.log inside OblivionRemastered\\Binaries\\Win64\\ue4ss\\")
+
+    extra_folders = [
+        folder for folder in _collect_related_log_folders(active_path)
+        if os.path.isdir(folder) and os.path.normcase(folder) != os.path.normcase(os.path.abspath(active_path))
+    ]
+    if extra_folders:
+        info("Other related folders found:")
+        for folder in extra_folders:
+            info(f"  {folder}")
+
+    lines.append("")
+    lines.append("CONFIG FILES")
+    writable, write_error = _path_writable(active_path)
+    if writable:
+        ok("Archipelago folder exists and is writable")
+    else:
+        problem(
+            f"Cannot write to the Archipelago folder: {active_path}",
+            f"Close the game, check folder permissions, or use /set_save_path. ({write_error})"
+        )
+
+    override_file = os.path.join(default_path, "path_override.txt")
+    if os.path.isfile(override_file):
+        try:
+            with open(override_file, "r", encoding="utf-8", errors="replace") as f:
+                override_value = f.readline().strip()
+            if override_value:
+                ok(f"path_override.txt points to: {override_value}")
+            else:
+                problem("path_override.txt exists but is empty", "Delete it to use the default folder, or put one folder path on the first line.")
+        except Exception as e:
+            problem(f"Could not read path_override.txt: {e}")
+    else:
+        ok("No path_override.txt (using the default Archipelago folder)")
+
+    connection_file = os.path.join(active_path, "current_connection.txt")
+    if connected:
+        if os.path.isfile(connection_file):
+            ok("current_connection.txt is present")
+        else:
+            problem(
+                "current_connection.txt is missing",
+                "Reconnect this client to the multiworld so the in-game mod can find the session."
+            )
+        if file_prefix:
+            settings_file = os.path.join(active_path, f"{file_prefix}_settings.txt")
+            if os.path.isfile(settings_file):
+                ok(f"Session settings file is present ({os.path.basename(settings_file)})")
+            else:
+                problem(
+                    "Session settings file is missing",
+                    "Reconnect this client. The mod needs the settings file before it can apply seed options."
+                )
+        else:
+            problem("Session file prefix is not set", "Reconnect this client to the multiworld.")
+    else:
+        info("Not connected yet. Connect to your multiworld, then run /helpme again to verify session files.")
+
+    lines.append("")
+    lines.append("GAME FILES")
+    if not game_path:
+        problem(
+            "Could not find the Oblivion Remastered install folder",
+            "If the game is installed, re-run the all-in-one installer and confirm the path it detects."
+        )
+    else:
+        mo2 = _find_mo2_instance(game_path)
+        if mo2:
+            info(f"Mod Organizer: {mo2['root']}")
+            info(f"MO2 profile: {mo2['profile']}")
+
+        data_dir = os.path.join(game_path, "OblivionRemastered", "Content", "Dev", "ObvData", "Data")
+        game_esp = os.path.join(data_dir, PLUGIN_ESP_NAME)
+        mo2_esp = None
+        if mo2:
+            mo2_esp = _mo2_search_file(mo2, (PLUGIN_ESP_NAME,))
+            if not mo2_esp:
+                mo2_esp = _mo2_search_file(mo2, ("OblivionRemastered", "Content", "Dev", "ObvData", "Data", PLUGIN_ESP_NAME))
+        if os.path.isfile(game_esp):
+            ok(PLUGIN_ESP_NAME)
+        elif mo2_esp:
+            ok(f"{PLUGIN_ESP_NAME} (Mod Organizer)")
+        else:
+            if mo2:
+                problem(
+                    f"{PLUGIN_ESP_NAME} was not found in the game Data folder or your MO2 mods",
+                    "Enable the Archipelago Oblivion ESP in Mod Organizer, or re-run the all-in-one installer."
+                )
+            else:
+                problem(
+                    f"{PLUGIN_ESP_NAME} is not in the game Data folder",
+                    f"Re-run the all-in-one installer. Expected: {game_esp}"
+                )
+
+        plugins_file = None
+        plugins_source = None
+        if mo2:
+            plugins_file = _mo2_plugins_file(mo2)
+            if plugins_file:
+                plugins_source = "MO2 profile"
+        if not plugins_file:
+            plugins_file = _find_plugins_file(game_path)
+            if plugins_file:
+                plugins_source = "game Data folder"
+        if not plugins_file:
+            if mo2:
+                problem(
+                    "plugins.txt was not found in your MO2 profile",
+                    f"Enable {PLUGIN_ESP_NAME} on the Plugins tab for profile '{mo2['profile']}'."
+                )
+            else:
+                problem(
+                    "plugins.txt was not found",
+                    f"Expected in {data_dir}. Launch the game once, then add {PLUGIN_ESP_NAME} as the last line."
+                )
+        else:
+            try:
+                plugins_text = _read_text_unknown_encoding(plugins_file)
+            except Exception as e:
+                problem(f"Could not read plugins.txt: {e}")
+            else:
+                if _line_listed(plugins_text, PLUGIN_ESP_NAME):
+                    ok(f"{plugins_source} plugins.txt lists {PLUGIN_ESP_NAME}")
+                else:
+                    if mo2:
+                        problem(
+                            f"MO2 profile plugins.txt does not list {PLUGIN_ESP_NAME}",
+                            f"Enable it on the Plugins tab for profile '{mo2['profile']}'."
+                        )
+                    else:
+                        problem(
+                            f"plugins.txt does not list {PLUGIN_ESP_NAME}",
+                            f"Re-run the all-in-one installer, or add that exact filename as the last line of: {plugins_file}"
+                        )
+
+        game_bridge = os.path.join(game_path, "OblivionRemastered", "Binaries", "Win64", "ue4ss", "Mods", "ArchipelagoBridge", "Scripts", "main.lua")
+        mo2_bridge = None
+        if mo2:
+            mo2_bridge = _mo2_search_file(mo2, ("ArchipelagoBridge", "Scripts", "main.lua"))
+            if not mo2_bridge:
+                mo2_bridge = _mo2_search_file(
+                    mo2,
+                    ("OblivionRemastered", "Binaries", "Win64", "ue4ss", "Mods", "ArchipelagoBridge", "Scripts", "main.lua"),
+                )
+            if not mo2_bridge:
+                mo2_bridge = _mo2_search_file(
+                    mo2,
+                    ("ue4ss", "Mods", "ArchipelagoBridge", "Scripts", "main.lua"),
+                )
+        if os.path.isfile(game_bridge):
+            ok("ArchipelagoBridge main.lua")
+        elif mo2_bridge:
+            ok("ArchipelagoBridge main.lua (Mod Organizer)")
+        else:
+            if mo2:
+                problem(
+                    "ArchipelagoBridge was not found in the game folder or your MO2 mods",
+                    "Install/enable ArchipelagoBridge in Mod Organizer, or re-run the all-in-one installer."
+                )
+            else:
+                problem(
+                    "ArchipelagoBridge is missing",
+                    "Re-run the all-in-one installer. The bridge files belong in ue4ss\\Mods\\ArchipelagoBridge\\"
+                )
+
+        bridge_root = None
+        if os.path.isfile(game_bridge):
+            bridge_root = os.path.dirname(os.path.dirname(game_bridge))
+        elif mo2_bridge:
+            bridge_root = os.path.dirname(os.path.dirname(mo2_bridge))
+        if bridge_root:
+            enabled_file = os.path.join(bridge_root, "enabled.txt")
+            if os.path.isfile(enabled_file):
+                ok("ArchipelagoBridge enabled.txt")
+            else:
+                problem(
+                    "ArchipelagoBridge enabled.txt is missing",
+                    "UE4SS will not load the bridge without enabled.txt. Re-run the installer or add an empty enabled.txt next to the Bridge mod."
+                )
+
+        game_mods = os.path.join(game_path, "OblivionRemastered", "Binaries", "Win64", "ue4ss", "Mods", "mods.txt")
+        mo2_mods = None
+        if mo2:
+            mo2_mods = _mo2_search_file(mo2, ("ue4ss", "Mods", "mods.txt"))
+            if not mo2_mods:
+                mo2_mods = _mo2_search_file(mo2, ("Mods", "mods.txt"))
+            if not mo2_mods:
+                mo2_mods = _mo2_search_file(
+                    mo2,
+                    ("OblivionRemastered", "Binaries", "Win64", "ue4ss", "Mods", "mods.txt"),
+                )
+        mods_file = game_mods if os.path.isfile(game_mods) else mo2_mods
+        if mods_file and os.path.isfile(mods_file):
+            try:
+                mods_text = _read_text_unknown_encoding(mods_file)
+            except Exception:
+                mods_text = ""
+            source = "MO2" if mods_file == mo2_mods and mods_file != game_mods else "game"
+            if mods_text and _text_contains(mods_text, "ArchipelagoBridge"):
+                ok(f"{source} mods.txt enables ArchipelagoBridge")
+            elif mo2_bridge or os.path.isfile(game_bridge):
+                info("mods.txt does not list ArchipelagoBridge; enabled.txt is enough for UE4SS if the Bridge is installed.")
+            else:
+                problem(
+                    "mods.txt does not enable ArchipelagoBridge",
+                    "Re-run the all-in-one installer, or add a line: ArchipelagoBridge : 1"
+                )
+        elif mo2_bridge or os.path.isfile(game_bridge):
+            info("mods.txt was not found. That is normal for Mod Organizer if ArchipelagoBridge is enabled as its own mod.")
+        else:
+            if mo2:
+                problem(
+                    "mods.txt was not found in the game folder or your MO2 mods",
+                    "Enable ArchipelagoBridge in Mod Organizer, or re-run the all-in-one installer."
+                )
+            else:
+                problem("mods.txt is missing", "Re-run the all-in-one installer so UE4SS can load ArchipelagoBridge.")
+
+        loader = os.path.join(game_path, "OblivionRemastered", "Binaries", "Win64", "obse64_loader.exe")
+        if os.path.isfile(loader):
+            ok("obse64_loader.exe")
+            info(f"Launch Oblivion with: {loader}")
+        else:
+            problem(
+                "obse64_loader.exe is missing",
+                "Re-run the all-in-one installer and launch the game with obse64_loader.exe, not the vanilla launcher."
+            )
+
+    lines.append("")
+    lines.append("RESULT")
+    if problems == 0:
+        if connected:
+            lines.append("  Setup looks good.")
+        else:
+            lines.append("  Local folders look good. Connect to your multiworld, then run /helpme again if the game still does not sync.")
+        lines.append("  If something is still wrong in-game, share archipelago_debug.log from the Archipelago folder above.")
+    else:
+        lines.append("  Setup is incomplete. Fix the PROBLEM items above.")
+        lines.append("  All-in-one installer users: re-run the installer, then launch with obse64_loader.exe.")
+        lines.append("  Mod Organizer users: enable Archipelago_Oblivion.esp and ArchipelagoBridge in your active profile.")
+        lines.append("  If you still need help, share this /helpme output and archipelago_debug.log from the Archipelago folder above.")
+    return lines
+
+
 class OblivionClientCommandProcessor(ClientCommandProcessor):
     @mark_raw
     def _cmd_set_save_path(self, path: str = ""):
@@ -1419,6 +2916,20 @@ class OblivionClientCommandProcessor(ClientCommandProcessor):
             self.output(f"Error: {e}")
         return True
     
+    def _cmd_claim_victory(self):
+        """Mark your slot as completed for the multiworld when AP goal checks are already done."""
+        if not isinstance(self.ctx, OblivionContext):
+            return True
+        if self.ctx.victory_sent:
+            self.output("Your slot is already marked as goal-complete for the multiworld.")
+            return True
+        if not self.ctx.needs_ap_victory_claim():
+            self.output("Not available: your goal location checks are not all complete on the server yet.")
+            return True
+        asyncio.create_task(self.ctx.claim_ap_victory())
+        self.output("Claiming victory for this slot...")
+        return True
+
     def _cmd_oblivion(self):
         """Print information about connected Oblivion game."""
         if not isinstance(self.ctx, OblivionContext):
@@ -1449,6 +2960,15 @@ class OblivionClientCommandProcessor(ClientCommandProcessor):
             elif goal == "dungeon_delver":
                 regions_required = len(self.ctx.slot_data.get("selected_regions", []) or [])
                 self.output(f"- Clear all dungeons in {regions_required} selected region(s) to win")
+            elif goal == "nirnsanity":
+                nirnroot_count = self.ctx.slot_data.get("nirnroot_count", 0)
+                self.output(f"- Collect {nirnroot_count} Nirnroot from the multiworld to win")
+            elif goal == "treasure_hunter":
+                gold_goal = self.ctx.slot_data.get("gold_goal", 0)
+                self.output(f"- Reach {gold_goal:,} gold capacity to win")
+            elif goal == "bounty_hunter":
+                bounty_count = self.ctx.slot_data.get("bounty_count", 0)
+                self.output(f"- Find all Progressive Bounty Contracts and complete all {bounty_count} bounty contract(s) to win")
             
             # Content available
             gate_count = self.ctx.slot_data.get("gate_count_required", 0)
@@ -1475,6 +2995,12 @@ class OblivionClientCommandProcessor(ClientCommandProcessor):
                 self.output(f"- Dungeons selected: {len(selected_dungeons)} across {len(selected_regions)} region(s)")
             elif dungeons_selected_count > 0:
                 self.output(f"- Dungeons selected: {dungeons_selected_count}")
+            bounty_count = self.ctx.slot_data.get("bounty_count", 0)
+            if bounty_count:
+                self.output(f"- Bounties: {bounty_count}")
+            fence_limit = self.ctx.slot_data.get("black_market_limit", 0)
+            if fence_limit:
+                self.output(f"- Black Market fence limit: {fence_limit}")
             
             # Class system display
             if selected_class:
@@ -1535,6 +3061,14 @@ class OblivionClientCommandProcessor(ClientCommandProcessor):
                 # Gate Vision setting
                 gate_vision = self.ctx.slot_data.get("gate_vision", "item")
                 self.output(f"Gate Vision: {gate_vision.title()}")
+
+    def _cmd_helpme(self):
+        """Diagnose client and mod setup, and print the active log folder locations."""
+        if not isinstance(self.ctx, OblivionContext):
+            return True
+        for line in _diagnose_oblivion_setup(self.ctx):
+            self.output(line)
+        return True
 
 
 class OblivionContext(CommonContext):
@@ -1673,11 +3207,16 @@ class OblivionContext(CommonContext):
         
         # State tracking
         self.last_completion_check = 0
+        self.completed_line_count = 0
+        self._completed_journal_ready = False
         self.file_prefix = ""
         self.session_id = ""
         self.game_loop_task = None
         self.bridge_processed_items = {}
         self.victory_sent = False
+        self.victory_claim_offered = False
+        self.connection_setup_complete = False
+        self.client_reported_location_ids: Set[int] = set()
         self.regions_completed_sent = set()
         
         # Deathlink state
@@ -1758,6 +3297,11 @@ class OblivionContext(CommonContext):
         
         # Initialize tracker
         self.tracker_enabled = True
+        self.tracker_mode = "progress"
+        self.progress_expanded = {"regions"}
+        self.progress_feed = []
+        self.progress_feed_open = False
+        self.progress_hide_completed = False
         self.tracker = None  # Will be initialized after connection
         
     async def server_auth(self, password_requested: bool = False):
@@ -1774,12 +3318,67 @@ class OblivionContext(CommonContext):
             asyncio.create_task(self._send_deathlink_to_mod())
         except Exception as e:
             logger.error(f"[DeathLink] Error in on_deathlink: {e}", exc_info=True)
+
+    def needs_ap_victory_claim(self) -> bool:
+        """Goal location checks are complete on the server but CLIENT_GOAL has not been sent."""
+        if self.victory_sent:
+            return False
+        if not self.tracker:
+            return False
+        return self.tracker.is_ap_goal_satisfied()
+
+    def _sync_goal_status_from_room(self, args: dict) -> None:
+        """Mirror server-reported goal status so reconnects do not re-offer claim_victory."""
+        slots = args.get("slots")
+        if not slots:
+            return
+        for slot_info in slots:
+            if slot_info.get("slot") == self.slot:
+                if slot_info.get("game_status") == ClientStatus.CLIENT_GOAL:
+                    self.victory_sent = True
+                break
+
+    def offer_claim_victory_if_needed(self) -> None:
+        """Prompt the player to use /claim_victory when AP goal checks are all completed but victory is not set on slot."""
+        if not self.needs_ap_victory_claim() or self.victory_claim_offered:
+            return
+
+        self.victory_claim_offered = True
+        goal_display = (self.slot_data.get("goal") or "goal").replace("_", " ").title()
+        logger.info("")
+        logger.info("=" * 58)
+        logger.info(f"  {goal_display} - all goal location checks are complete on the server")
+        logger.info("  (possibly via !collect on another slot), but in-game victory has not been reported.")
+        logger.info("")
+        logger.info("  If you wish to mark your slot complete for the multiworld, use:")
+        logger.info("    /claim_victory")
+        logger.info("=" * 58)
+        logger.info("")
+
+    async def claim_ap_victory(self) -> bool:
+        """Send CLIENT_GOAL after re-validating that all goal locations are checked."""
+        if self.victory_sent:
+            return False
+        if not self.tracker or not self.tracker.is_ap_goal_satisfied():
+            return False
+        await self.send_msgs([{"cmd": "StatusUpdate", "status": ClientStatus.CLIENT_GOAL}])
+        self.victory_sent = True
+        self.victory_claim_offered = False
+        return True
     
     def on_package(self, cmd: str, args: dict):
         """Handle incoming server packages."""
-        if cmd == "Connected":
+        if cmd == "RoomInfo":
+            seed = args.get("seed_name")
+            if seed:
+                self.seed_name = seed
+        elif cmd == "Connected":
             self.slot_data = args.get("slot_data", {})
-            self.session_id = self.slot_data.get("session_id") or ""
+            self._resolve_session_id()
+            self.victory_claim_offered = False
+            self.connection_setup_complete = False
+            self.client_reported_location_ids = set()
+            self._sync_goal_status_from_room(args)
 
             # Set up file prefix
             auth_name = getattr(self, 'auth', None) or getattr(self, 'player_name', None) or getattr(self, 'name', None)
@@ -1834,6 +3433,7 @@ class OblivionContext(CommonContext):
                 logger.error(f"[Oblivion] Cannot write to save directory: {self.oblivion_save_path}")
                 logger.error(f"[Oblivion] Error: {e}")
                 logger.error("[Oblivion] The mod will not receive items. Try running as Administrator or use /set_save_path to choose a different location.")
+                logger.error("[Oblivion] /helpme can diagnose setup and show the active log folder.")
         elif cmd == "ReceivedItems":
             asyncio.create_task(self._send_items_to_oblivion())
             # Update tracker with new items
@@ -1873,9 +3473,14 @@ class OblivionContext(CommonContext):
                 self.tracker._shop_init_done = True
                 self.tracker.update_shop_tab()
         elif cmd == "RoomUpdate":
+            self._sync_goal_status_from_room(args)
+            external_checks = set()
             if "checked_locations" in args:
                 # Sync checked_locations and missing_locations with server
                 new_checked = set(args["checked_locations"])
+                already = getattr(self, "checked_locations", set()) or set()
+                reported = getattr(self, "client_reported_location_ids", set()) or set()
+                external_checks = new_checked - already - reported
                 if hasattr(self, 'checked_locations'):
                     self.checked_locations |= new_checked
                 else:
@@ -1895,11 +3500,96 @@ class OblivionContext(CommonContext):
                 self.tracker.update_shop_tab()
                 self.tracker.schedule_shop_scout()
                 self.tracker.update_goal_progress()
+            self._sync_completed_journal_from_server()
+            # Only prompt after checks we did not report from the game (e.g. !collect).
+            if self.connection_setup_complete and external_checks:
+                self.offer_claim_victory_if_needed()
+
+    def _print_json_plain_text(self, args: dict) -> str:
+        data = args.get("data") or []
+        parser = getattr(self, "rawjsontotextparser", None)
+        if parser:
+            try:
+                import copy
+                return str(parser(copy.deepcopy(data))).strip()
+            except Exception:
+                pass
+        parts = []
+        for part in data:
+            if not isinstance(part, dict):
+                if part is not None:
+                    parts.append(str(part))
+                continue
+            text = str(part.get("text") or "")
+            kind = part.get("type")
+            player = part.get("player")
+            try:
+                if kind == "player_id":
+                    text = self.player_names.get(int(text), text)
+                elif kind == "item_id":
+                    text = self.item_names.lookup_in_slot(int(text), player)
+                elif kind == "location_id":
+                    text = self.location_names.lookup_in_slot(int(text), player)
+            except Exception:
+                pass
+            parts.append(text)
+        return "".join(parts).strip()
+
+    def _is_progress_feed_noise(self, text: str, msg_type) -> bool:
+        kind = str(msg_type or "")
+        if kind in ("Join", "Part", "Tutorial", "TagsChanged"):
+            return True
+        lower = (text or "").lower()
+        if "has joined" in lower or "has left" in lower:
+            return True
+        if lower.endswith(" connected") or " connected." in lower:
+            return True
+        if "now that you are connected" in lower:
+            return True
+        if "check the tracker" in lower or "tracker tab" in lower:
+            return True
+        if "not sure what you can do" in lower:
+            return True
+        if "(no recent messages yet)" in lower or lower == "no recent messages yet":
+            return True
+        return False
+
+    def _print_json_markup(self, args: dict) -> str:
+        data = args.get("data") or []
+        import copy
+        parser = None
+        ui = getattr(self, "ui", None)
+        if ui is not None:
+            parser = getattr(ui, "json_to_kivy_parser", None)
+        if parser:
+            try:
+                return str(parser(copy.deepcopy(data))).strip()
+            except Exception:
+                pass
+        return self._print_json_plain_text(args)
+
+    def _append_progress_feed(self, text: str, msg_type=None, markup: str = None):
+        if not text or self._is_progress_feed_noise(text, msg_type):
+            return
+        line = markup or text
+        feed = getattr(self, "progress_feed", None)
+        if not isinstance(feed, list):
+            feed = []
+            self.progress_feed = feed
+        if feed and feed[-1] == line:
+            return
+        feed.append(line)
+        del feed[:-20]
+        panel = getattr(self, "tracker_panel", None)
+        if panel and hasattr(panel, "apply_feed"):
+            panel.apply_feed()
             
     def on_print_json(self, args: dict):
         """Handle PrintJSON messages from server, including item transfers."""
         # Call parent method for normal handling
         super().on_print_json(args)
+        plain = self._print_json_plain_text(args)
+        self._append_progress_feed(plain, args.get("type"), markup=self._print_json_markup(args))
         # Live hint integration for Shop tab
         if not hasattr(self, 'tracker') or not self.tracker:
             return
@@ -2023,6 +3713,18 @@ class OblivionContext(CommonContext):
             logger.info("==========================================")
         except Exception as e:
             logger.warning(f"Could not load item groups: {e}")
+
+    def _output_markup(self, message: str) -> None:
+        panels = getattr(getattr(self, "ui", None), "log_panels", None) or {}
+        wrote = False
+        for key in ("Archipelago", "All"):
+            panel = panels.get(key)
+            on_markup = getattr(panel, "on_message_markup", None)
+            if callable(on_markup):
+                on_markup(message)
+                wrote = True
+        if not wrote:
+            logger.info(re.sub(r"\[/?[^\]]+\]", "", message))
             
     async def _setup_after_connection(self):
         """Complete setup after successful connection to slot."""
@@ -2041,18 +3743,59 @@ class OblivionContext(CommonContext):
         
         # Wait for connection data to be fully populated
         await self._wait_for_connection_data()
+        self._sync_completed_journal_from_server()
         
         # Check for any existing completion files
         await self._check_for_locations(force_check=True)
         
         # Start the file monitoring loop
         self._start_game_loop()
+
+        self.connection_setup_complete = True
+        self.offer_claim_victory_if_needed()
+        if not getattr(self, "_tracker_tip_shown", False):
+            self._output_markup(
+                "[b]Not sure what you can do? Check the [color=D1B247]Tracker[/color] tab.[/b]"
+            )
+            self._tracker_tip_shown = True
             
+    def _fallback_session_id(self) -> str:
+        """Stable per-seed id. seed_name is assigned at generation and does not change on reconnect."""
+        seed = getattr(self, "seed_name", None) or ""
+        slot = getattr(self, "slot", None)
+        if seed and slot is not None:
+            return hashlib.sha256(f"{seed}:{slot}".encode("utf-8")).hexdigest()
+        fingerprint = dict(self.slot_data or {})
+        fingerprint.pop("session_id", None)
+        payload = {
+            "seed": seed,
+            "slot": slot,
+            "team": getattr(self, "team", None),
+            "auth": getattr(self, "auth", None),
+            "slot_data": fingerprint,
+        }
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+    def _resolve_session_id(self) -> None:
+        session_id = ""
+        if isinstance(self.slot_data, dict):
+            session_id = str(self.slot_data.get("session_id") or "").strip()
+        if session_id:
+            self.session_id = session_id
+            return
+        self.session_id = self._fallback_session_id()
+        logger.warning(
+            "slot_data had no session_id; using stable per-seed fallback %s",
+            self.session_id[:8],
+        )
+
     def _setup_file_prefix(self):
         """Setup file prefix based on player name and session ID."""
         from Utils import get_file_safe_name
+        if not self.session_id:
+            self._resolve_session_id()
         safe_auth = get_file_safe_name(self.auth)
-        session_short = self.session_id[:8] if self.session_id else "nosession"
+        session_short = self.session_id[:8]
         self.file_prefix = f"AP_{safe_auth}_{session_short}"
         self._load_sent_trap_indices()
 
@@ -2321,16 +4064,29 @@ class OblivionContext(CommonContext):
                 f.write(f"auto_tracking={'True' if bool(auto_tracking) else 'False'}\n")
                 silent_auto_tracking = self.slot_data.get("silent_auto_tracking", False)
                 f.write(f"silent_auto_tracking={'True' if bool(silent_auto_tracking) else 'False'}\n")
+                ap_tips = self.slot_data.get("ap_tips", True)
+                f.write(f"ap_tips={'True' if bool(ap_tips) else 'False'}\n")
+                skill_xp_multiplier = int(self.slot_data.get("skill_xp_multiplier", 1) or 1)
+                f.write(f"skill_xp_multiplier={skill_xp_multiplier}\n")
 
                 # Write kill check settings (enables kill tracking in the mod when > 0)
                 dungeon_kills = self.slot_data.get("dungeon_kills", 0)
                 overworld_kills = self.slot_data.get("overworld_kills", 0)
-                if dungeon_kills > 0 or overworld_kills > 0:
+                oblivion_kills = self.slot_data.get("oblivion_kills", 0)
+                if dungeon_kills > 0 or overworld_kills > 0 or oblivion_kills > 0:
                     f.write(f"track_kills=True\n")
                     f.write(f"dungeon_kills={dungeon_kills}\n")
                     f.write(f"overworld_kills={overworld_kills}\n")
+                    f.write(f"oblivion_kills={oblivion_kills}\n")
+                    f.write(f"dungeon_kills_per_check={self.slot_data.get('dungeon_kills_per_check', 1)}\n")
+                    f.write(f"overworld_kills_per_check={self.slot_data.get('overworld_kills_per_check', 1)}\n")
+                    f.write(f"oblivion_kills_per_check={self.slot_data.get('oblivion_kills_per_check', 2)}\n")
                     f.write(f"dungeon_kills_per_region={self.slot_data.get('dungeon_kills_per_region', dungeon_kills)}\n")
                     f.write(f"overworld_kills_per_region={self.slot_data.get('overworld_kills_per_region', overworld_kills)}\n")
+                    f.write(f"oblivion_kills_per_gate={self.slot_data.get('oblivion_kills_per_gate', oblivion_kills)}\n")
+                    f.write(f"oblivion_kills_per_region={self.slot_data.get('oblivion_kills_per_region', oblivion_kills)}\n")
+
+                f.write(f"weapon_lock={'True' if self.slot_data.get('weapon_lock') else 'False'}\n")
 
                 doomstone_checks = self.slot_data.get("doomstone_checks", True)
                 f.write(f"doomstone_checks={'True' if bool(doomstone_checks) else 'False'}\n")
@@ -2353,6 +4109,29 @@ class OblivionContext(CommonContext):
                         # provide the selected dungeon count per region
                         count_key = f"region_{region_name}_dungeon_count"
                         f.write(f"{count_key}={len(region_dungeons)}\n")
+
+                fence_limit = int(self.slot_data.get("black_market_limit", 0) or 0)
+                f.write(f"fence_limit={fence_limit}\n")
+                selected_bounties = self.slot_data.get("selected_bounties", []) or []
+                f.write(f"bounty_count={len(selected_bounties)}\n")
+                for contract in selected_bounties:
+                    index = contract.get("index", 0)
+                    f.write(
+                        "bounty_{index}={type}|{dungeon}|{marker}|{target}|{cull}|{checks}|{display}|{occupant}\n".format(
+                            index=index,
+                            type=contract.get("type", ""),
+                            dungeon=contract.get("dungeon", ""),
+                            marker=contract.get("marker", ""),
+                            target=contract.get("target", ""),
+                            cull=contract.get("cull", 0),
+                            checks=contract.get("checks", 1),
+                            display=self.tracker._bounty_display_label(contract) if self.tracker else contract.get("display", ""),
+                            occupant=contract.get("occupant", ""),
+                        )
+                    )
+                starting_unlocked = self.slot_data.get("starting_unlocked_regions", []) or []
+                if starting_unlocked:
+                    f.write(f"starting_unlocked_regions={','.join(starting_unlocked)}\n")
                 
                 # Write shrine-specific offerings
                 if shrine_offerings:
@@ -2369,7 +4148,54 @@ class OblivionContext(CommonContext):
                     
         except Exception as e:
             logger.error(f"Error writing settings: {e}")
-        
+
+    def _completed_path(self):
+        if not self.file_prefix or not self.oblivion_save_path:
+            return None
+        return os.path.join(self.oblivion_save_path, f"{self.file_prefix}_completed.txt")
+
+    def _sync_completed_journal_from_server(self):
+        """If the local journal is missing checks the server already has, append those tokens.
+
+        Keeps *_completed.txt as the game journal. Server fills gaps when the file
+        was deleted or this machine never saw the clear.
+        """
+        path = self._completed_path()
+        if not path or not getattr(self, "slot_data", None):
+            return
+        checked = set(getattr(self, "checked_locations", set()) or [])
+        existing = set()
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                    existing = {line.strip() for line in handle if line.strip()}
+            except Exception as e:
+                logger.error(f"Error reading completion journal: {e}")
+                return
+        to_append = []
+        for name in self.slot_data.get("selected_dungeons", []) or []:
+            data = Locations.location_table.get(name)
+            token = f"{name} Dungeon Cleared"
+            if data and data.id in checked and token not in existing:
+                to_append.append(token)
+        for contract in self.slot_data.get("selected_bounties", []) or []:
+            try:
+                index = int(contract.get("index", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            names = list(contract.get("locations") or contract.get("location_names") or [])
+            for loc_name in names:
+                data = Locations.location_table.get(loc_name)
+                if data and data.id in checked and loc_name not in existing:
+                    to_append.append(loc_name)
+        if not to_append:
+            return
+        try:
+            with open(path, "a", encoding="utf-8") as handle:
+                for token in to_append:
+                    handle.write(token + "\n")
+        except Exception as e:
+            logger.error(f"Error appending completion journal: {e}")
 
     def _read_bridge_status(self):
         """Read bridge status file to sync with already processed items."""
@@ -2561,6 +4387,45 @@ class OblivionContext(CommonContext):
                 logger.warning("Timeout waiting for missing_locations to populate, proceeding anyway")
                 break
     
+    def _is_journal_incremental(self, item):
+        if item in ("Oblivion Gate Closed", "Nirnroot Harvested", "Dungeon Kill", "Overworld Kill", "Oblivion Kill"):
+            return True
+        return item.endswith(" Skill Increase")
+
+    def _journal_incremental_deficit_tokens(self, completed_items):
+        """Award only the gap between journal event counts and checks already on the server."""
+        id_to_name = {data.id: name for name, data in Locations.location_table.items()}
+        checked_names = []
+        for loc_id in getattr(self, "checked_locations", set()) or []:
+            name = id_to_name.get(loc_id)
+            if name:
+                checked_names.append(name)
+
+        def already_checked(predicate):
+            return sum(1 for name in checked_names if predicate(name))
+
+        tokens = []
+        for token, predicate in (
+            ("Oblivion Gate Closed", lambda name: name.startswith("Gate ") and name.endswith(" Closed")),
+            ("Nirnroot Harvested", lambda name: name.startswith("Nirnroot ") and name.endswith(" Harvested")),
+            ("Dungeon Kill", lambda name: name.startswith("Dungeon Kill ")),
+            ("Overworld Kill", lambda name: name.startswith("Overworld Kill ")),
+            ("Oblivion Kill", lambda name: name.startswith("Oblivion Kill ")),
+        ):
+            file_count = sum(1 for item in completed_items if item == token)
+            tokens.extend([token] * max(0, file_count - already_checked(predicate)))
+
+        skill_counts = {}
+        for item in completed_items:
+            if item.endswith(" Skill Increase"):
+                skill_counts[item] = skill_counts.get(item, 0) + 1
+        for token, file_count in skill_counts.items():
+            skill_name = token[: -len(" Skill Increase")]
+            prefix = f"{skill_name} Skill Increase "
+            done = already_checked(lambda name, p=prefix: name.startswith(p))
+            tokens.extend([token] * max(0, file_count - done))
+        return tokens
+
     async def _check_for_locations(self, force_check=False):
         """Check for completed locations from the game."""
         # Ensure we have the necessary connection data
@@ -2577,6 +4442,8 @@ class OblivionContext(CommonContext):
         completion_path = os.path.join(self.oblivion_save_path, f"{self.file_prefix}_completed.txt")
         
         if not os.path.exists(completion_path):
+            self.completed_line_count = 0
+            self._completed_journal_ready = False
             return
             
         try:
@@ -2593,6 +4460,26 @@ class OblivionContext(CommonContext):
             
             # Build location ID lookup table from pre-defined locations
             name_to_id_map = {name: data.id for name, data in Locations.location_table.items()}
+            bounty_token_ids = {}
+            tracker = getattr(self, "tracker", None)
+            for contract in self.slot_data.get("selected_bounties", []) or []:
+                names = list(contract.get("locations") or contract.get("location_names") or [])
+                ids = []
+                for loc_name in names:
+                    loc_id = name_to_id_map.get(loc_name)
+                    if loc_id:
+                        ids.append(loc_id)
+                if not ids:
+                    continue
+                aliases = set(names)
+                display = contract.get("display") or ""
+                labeled = tracker._bounty_display_label(contract) if tracker else display
+                for alias in (display, labeled):
+                    if alias:
+                        aliases.add(alias)
+                        aliases.add("Bounty: " + alias)
+                for alias in aliases:
+                    bounty_token_ids[alias] = ids
             
             # Get configuration values for processing
             dungeons_selected_count = self.slot_data.get("dungeons_selected", 0)
@@ -2600,6 +4487,23 @@ class OblivionContext(CommonContext):
             # Process each completion entry
             new_locations = []
             
+            if self.completed_line_count > len(completed_items):
+                self.completed_line_count = 0
+                self._completed_journal_ready = False
+
+            if not self._completed_journal_ready:
+                # First read: uniques in full; incrementals by deficit so old kill lines are not replayed.
+                items_to_process = [
+                    item for item in completed_items
+                    if not self._is_journal_incremental(item) and item != "Deathlink"
+                ]
+                items_to_process.extend(self._journal_incremental_deficit_tokens(completed_items))
+                self._completed_journal_ready = True
+                self.completed_line_count = len(completed_items)
+            else:
+                items_to_process = completed_items[self.completed_line_count:]
+                self.completed_line_count = len(completed_items)
+
             # Find the starting gate number
             next_gate_num = 1
             for i in range(1, 21):  # Up to 20 gates
@@ -2610,7 +4514,7 @@ class OblivionContext(CommonContext):
                         next_gate_num = i
                         break
             
-            for item in completed_items:
+            for item in items_to_process:
                 # Check if this is a gate closed log entry
                 if item == "Oblivion Gate Closed":
                     # Find the next available gate location
@@ -2697,14 +4601,14 @@ class OblivionContext(CommonContext):
                         if location_id in self.missing_locations and location_id not in new_locations:
                             new_locations.append(location_id)
                     else:
-                        logger.warning(f"Unknown or unselected dungeon entry: {item}")
+                        pass
                         
                 # Check if this is a Victory completion
                 elif item == "Victory":
                     if not self.victory_sent:
-                        from NetUtils import ClientStatus
-                        await self.send_msgs([{ "cmd": "StatusUpdate", "status": ClientStatus.CLIENT_GOAL }])
+                        await self.send_msgs([{"cmd": "StatusUpdate", "status": ClientStatus.CLIENT_GOAL}])
                         self.victory_sent = True
+                        self.victory_claim_offered = False
                         
                 # Check if this is a Deathlink
                 elif item == "Deathlink":
@@ -2738,19 +4642,22 @@ class OblivionContext(CommonContext):
                                 break  # Only send one check per harvest event
 
                 # Kill location events
-                elif item in ("Dungeon Kill", "Overworld Kill"):
-                    kill_type = "dungeon" if item == "Dungeon Kill" else "overworld"
-                    total_kills = self.slot_data.get(f"{kill_type}_kills", 0)
+                elif item in ("Dungeon Kill", "Overworld Kill", "Oblivion Kill"):
+                    if item == "Dungeon Kill":
+                        kill_type, prefix, total_key = "dungeon", "Dungeon", "dungeon_kills"
+                    elif item == "Overworld Kill":
+                        kill_type, prefix, total_key = "overworld", "Overworld", "overworld_kills"
+                    else:
+                        kill_type, prefix, total_key = "oblivion", "Oblivion", "oblivion_kills"
+                    total_kills = self.slot_data.get(total_key, 0)
                     if total_kills == 0:
                         continue
 
-                    # Find the next missing kill location and check it is in logic
                     for kill_num in range(1, total_kills + 1):
-                        location_name = f"{'Dungeon' if kill_type == 'dungeon' else 'Overworld'} Kill {kill_num}"
+                        location_name = f"{prefix} Kill {kill_num}"
                         if location_name in name_to_id_map:
                             location_id = name_to_id_map[location_name]
                             if location_id in self.missing_locations and location_id not in new_locations:
-                                # Silently skip if out of logic (mirrors skill increase cap pattern)
                                 is_accessible = False
                                 try:
                                     if self.tracker:
@@ -2758,8 +4665,8 @@ class OblivionContext(CommonContext):
                                 except Exception:
                                     is_accessible = True
                                 if not is_accessible:
-                                    logger.debug(f"{location_name} is out of logic (insufficient region access), skipping kill")
-                                    break  # Higher-numbered kills are also out of logic
+                                    logger.debug(f"{location_name} is out of logic, skipping kill")
+                                    break
                                 new_locations.append(location_id)
                                 break
                 
@@ -2779,6 +4686,22 @@ class OblivionContext(CommonContext):
                     except (ValueError, AttributeError):
                         # Invalid format, skip
                         pass
+
+                elif item in bounty_token_ids:
+                    for location_id in bounty_token_ids[item]:
+                        if location_id in self.missing_locations and location_id not in new_locations:
+                            new_locations.append(location_id)
+
+                elif item.startswith("Black Market: ") and item.endswith(" Gold Fenced"):
+                    if item in name_to_id_map:
+                        location_id = name_to_id_map[item]
+                        if location_id in self.missing_locations and location_id not in new_locations:
+                            new_locations.append(location_id)
+
+                elif item in name_to_id_map:
+                    location_id = name_to_id_map[item]
+                    if location_id in self.missing_locations and location_id not in new_locations:
+                        new_locations.append(location_id)
                         
 
 
@@ -2830,18 +4753,13 @@ class OblivionContext(CommonContext):
                             
             # Send location checks to server
             if new_locations:
+                self.client_reported_location_ids.update(new_locations)
                 found_locations = await self.check_locations(new_locations)
                 for location_id in found_locations:
                     location_name = self.location_names.lookup_in_game(location_id, self.game)
                     if self.tracker:
                         self.tracker.update_locations()
-            
-            # Always delete the completion file after processing
-            try:
-                os.remove(completion_path)
-            except Exception as delete_error:
-                logger.error(f"Failed to delete completion file: {delete_error}")
-                
+
         except Exception as e:
             logger.error(f"Error checking locations: {e}")
             import traceback
@@ -2887,6 +4805,9 @@ class OblivionContext(CommonContext):
         # Clear connection state after cleanup
         self.slot_data = {}
         self.session_id = ""
+        self.completed_line_count = 0
+        self._completed_journal_ready = False
+        self.last_completion_check = 0
         
         await super().disconnect(allow_autoreconnect)
     
@@ -2926,8 +4847,446 @@ class OblivionContext(CommonContext):
 
     def run_gui(self):
         """Launch the client with GUI."""
-        from kvui import GameManager, UILog
-        
+        from kvui import GameManager, UILog, SelectableLabel
+        from kivy.clock import Clock
+        from kivy.factory import Factory
+        from kivy.graphics import Color, Line, Rectangle
+        from kivy.metrics import dp
+        from kivy.uix.anchorlayout import AnchorLayout
+        from kivy.uix.behaviors import ButtonBehavior
+        from kivy.uix.boxlayout import BoxLayout
+        from kivy.uix.label import Label
+        from kivy.uix.popup import Popup
+        from kivy.uix.widget import Widget
+
+        _progress_mono_font()
+        _TRACKER_GOLD = (0.82, 0.70, 0.28, 1)
+        _TRACKER_BTN = (0.62, 0.78, 0.95, 1)
+        _TRACKER_BTN_FILL = (0.20, 0.38, 0.58, 1)
+
+        class TrackerRow(SelectableLabel):
+            """One line only."""
+
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+                self.max_lines = 1
+                self.shorten = True
+                self.shorten_from = "right"
+                self.markup = True
+                self.valign = "middle"
+                self.font_size = "20sp"
+
+            def on_size(self, instance_label, size):
+                super().on_size(instance_label, size)
+                self.max_lines = 1
+                self.shorten = True
+                self.font_size = "20sp"
+                self.height = dp(30)
+                self.text_size = (self.width, dp(30))
+
+        try:
+            Factory.register("TrackerRow", cls=TrackerRow)
+        except Exception:
+            pass
+
+        class CenteredBarButton(ButtonBehavior, Label):
+            def __init__(self, text, width, callback, filled=False, **kwargs):
+                super().__init__(
+                    text=text,
+                    halign="center",
+                    valign="middle",
+                    size_hint=(None, None),
+                    height=dp(40),
+                    width=dp(width),
+                    font_size="15sp",
+                    color=(1, 1, 1, 1) if filled else _TRACKER_BTN,
+                    **kwargs
+                )
+                self._filled = filled
+                with self.canvas.before:
+                    if filled:
+                        Color(*_TRACKER_BTN_FILL)
+                        self._shape = Rectangle(pos=self.pos, size=self.size)
+                        self._outline = None
+                    else:
+                        Color(*_TRACKER_BTN)
+                        self._shape = None
+                        self._outline = Line(rectangle=(self.x, self.y, self.width, self.height), width=1.15)
+                self.bind(pos=self._sync_chrome, size=self._sync_chrome)
+                self.bind(on_release=callback)
+                self._sync_chrome()
+
+            def _sync_chrome(self, *_args):
+                self.text_size = self.size
+                if self._shape is not None:
+                    self._shape.pos = self.pos
+                    self._shape.size = self.size
+                if self._outline is not None:
+                    self._outline.rectangle = (self.x, self.y, self.width, self.height)
+
+        class TrackerLog(UILog):
+            adaptive_height = True
+
+            def __init__(self, panel, **kwargs):
+                super().__init__(**kwargs)
+                self.panel = panel
+                self.viewclass = "SelectableLabel"
+                self.do_scroll_x = False
+                self.do_scroll_y = True
+
+            def _progress_row_index(self, touch):
+                if self.children:
+                    layout = self.children[0]
+                    try:
+                        lx, ly = layout.to_widget(*self.to_window(*touch.pos))
+                        for child in layout.children:
+                            if child.collide_point(lx, ly):
+                                index = getattr(child, "index", None)
+                                if index is not None:
+                                    return index
+                    except Exception:
+                        pass
+                try:
+                    return self.get_view_index_at(self.to_local(*touch.pos))
+                except Exception:
+                    return None
+
+            def on_touch_down(self, touch):
+                if (
+                    getattr(self.panel.ctx, "tracker_mode", "progress") == "progress"
+                    and self.collide_point(*touch.pos)
+                    and not getattr(touch, "is_mouse_scrolling", False)
+                ):
+                    index = self._progress_row_index(touch)
+                    data = getattr(self, "data", None) or []
+                    if index is not None and 0 <= index < len(data):
+                        key = data[index].get("expand_key")
+                        if key:
+                            self.panel.toggle_progress_section(key)
+                            return True
+                return super().on_touch_down(touch)
+
+        class TrackerPanel(BoxLayout):
+            def __init__(self, ctx, **kwargs):
+                kwargs.setdefault("size_hint", (1, 1))
+                super().__init__(orientation="vertical", padding=(dp(10), 0, dp(10), 0), **kwargs)
+                self.ctx = ctx
+                self._keep_scroll = False
+                self.log = TrackerLog(self)
+                self.log.size_hint = (1, 1)
+                self.feed_log = UILog()
+                try:
+                    self.feed_log.adaptive_height = False
+                except Exception:
+                    pass
+                self.feed_log.size_hint = (1, None)
+                self.feed_log.height = 0
+                self.feed_log.opacity = 0
+                self.feed_box = BoxLayout(
+                    orientation="vertical",
+                    size_hint_y=None,
+                    height=0,
+                    padding=(dp(10), dp(8), dp(10), dp(8)),
+                )
+                with self.feed_box.canvas.after:
+                    Color(*_TRACKER_GOLD)
+                    self._feed_border = Line(rectangle=(0, 0, 1, 1), width=1.15)
+                def _sync_feed_border(*_args):
+                    x, y = self.feed_box.pos
+                    w, h = self.feed_box.size
+                    self._feed_border.rectangle = (x, y, w, h)
+                self.feed_box.bind(pos=_sync_feed_border, size=_sync_feed_border)
+                self.feed_box.add_widget(self.feed_log)
+                self.feed_footer = BoxLayout(
+                    orientation="vertical",
+                    size_hint_y=None,
+                    height=0,
+                    padding=(dp(12), dp(16), dp(12), dp(12)),
+                    spacing=dp(10),
+                )
+                self.feed_button = CenteredBarButton("Show activity", 118, self.on_feed_toggle)
+                self.expand_all_btn = CenteredBarButton("Expand all", 96, self.on_expand_all)
+                self.collapse_all_btn = CenteredBarButton("Collapse all", 104, self.on_collapse_all)
+                self.hide_completed_btn = CenteredBarButton("Hide completed", 126, self.on_hide_completed)
+                self.info_btn = CenteredBarButton("Info", 56, self.on_info)
+                self.toggle_button = CenteredBarButton("Show In Logic", 132, self.on_toggle, filled=True)
+                self._center_btns = BoxLayout(
+                    orientation="horizontal",
+                    size_hint=(None, None),
+                    width=dp(96 + 104 + 126 + 56 + 18),
+                    height=dp(40),
+                    spacing=dp(6),
+                )
+                self._center_btns.add_widget(self.expand_all_btn)
+                self._center_btns.add_widget(self.collapse_all_btn)
+                self._center_btns.add_widget(self.hide_completed_btn)
+                self._center_btns.add_widget(self.info_btn)
+                self._left_flex = Widget(size_hint_x=1)
+                self._right_flex = Widget(size_hint_x=1)
+                button_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(40), spacing=dp(8))
+                button_row.add_widget(self.feed_button)
+                button_row.add_widget(self._left_flex)
+                button_row.add_widget(self._center_btns)
+                button_row.add_widget(self._right_flex)
+                button_row.add_widget(self.toggle_button)
+                self.feed_footer.add_widget(self.feed_box)
+                self.feed_footer.add_widget(button_row)
+                self.log_wrap = AnchorLayout(anchor_x="center", anchor_y="center")
+                self.log_wrap.add_widget(self.log)
+                self.add_widget(self.log_wrap)
+                self.add_widget(self.feed_footer)
+                self.log_wrap.bind(size=lambda *_: self._fit_progress_log())
+                self.sync_toggle_label()
+
+            def _fit_progress_log(self):
+                progress = getattr(self.ctx, "tracker_mode", "progress") == "progress"
+                if not progress:
+                    self.log.size_hint = (1, 1)
+                    self.log.do_scroll_y = True
+                    return
+                layout = self.log.children[0] if self.log.children else None
+                if layout is not None:
+                    try:
+                        layout.default_size = (None, dp(30))
+                    except Exception:
+                        pass
+                needed = getattr(layout, "minimum_height", 0) if layout is not None else 0
+                if not needed:
+                    needed = dp(30) * len(getattr(self.log, "data", None) or [])
+                avail = self.log_wrap.height
+                if needed and needed < avail:
+                    self.log.size_hint = (1, None)
+                    self.log.height = needed
+                    self.log.do_scroll_y = False
+                else:
+                    self.log.size_hint = (1, 1)
+                    self.log.do_scroll_y = True
+
+            def _set_progress_expanded(self, expand_all):
+                if getattr(self.ctx, "tracker_mode", "progress") != "progress":
+                    return
+                if expand_all:
+                    self.ctx.progress_expanded = set(getattr(self.ctx, "progress_expand_keys", None) or set())
+                else:
+                    self.ctx.progress_expanded = set()
+                self._keep_scroll = True
+                scroll_y = getattr(self.log, "scroll_y", 1)
+                tracker = getattr(self.ctx, "tracker", None)
+                if tracker:
+                    tracker.update_progress_view()
+                self.log.scroll_y = scroll_y
+
+            def on_expand_all(self, *_args):
+                self._set_progress_expanded(True)
+
+            def on_collapse_all(self, *_args):
+                self._set_progress_expanded(False)
+
+            def on_hide_completed(self, *_args):
+                if getattr(self.ctx, "tracker_mode", "progress") != "progress":
+                    return
+                self.ctx.progress_hide_completed = not getattr(self.ctx, "progress_hide_completed", False)
+                self.hide_completed_btn.text = (
+                    "Show completed" if self.ctx.progress_hide_completed else "Hide completed"
+                )
+                self._keep_scroll = True
+                scroll_y = getattr(self.log, "scroll_y", 1)
+                tracker = getattr(self.ctx, "tracker", None)
+                if tracker:
+                    tracker.update_progress_view()
+                self.log.scroll_y = scroll_y
+
+            def on_info(self, *_args):
+                root = BoxLayout(orientation="vertical", padding=(dp(16), dp(14)), spacing=dp(12))
+                blurb = Label(
+                    text=(
+                        "This view shows your overall content progression.\n"
+                        "Bars fill as you complete checks in each category.\n"
+                        "Colors indicate which content is currently available."
+                    ),
+                    halign="center",
+                    valign="middle",
+                    color=(0.9, 0.9, 0.9, 1),
+                    font_size="14sp",
+                    size_hint_y=None,
+                    height=dp(72),
+                )
+                blurb.bind(size=lambda *_: setattr(blurb, "text_size", (blurb.width, None)))
+                keys = BoxLayout(orientation="vertical", size_hint=(None, None), width=dp(300), height=dp(78), spacing=dp(6))
+                for name, hex_color, meaning in (
+                    ("White", "FFFFFF", "Available content"),
+                    ("Red", "EE0000", "Locked / out of logic"),
+                    ("Green", "00ff00", "Fully completed"),
+                ):
+                    row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(22), spacing=dp(10))
+                    left = Label(
+                        text=f"[color={hex_color}]{name}[/color]",
+                        markup=True,
+                        halign="right",
+                        valign="middle",
+                        font_size="15sp",
+                        size_hint_x=None,
+                        width=dp(64),
+                    )
+                    sep = Label(
+                        text="-",
+                        halign="center",
+                        valign="middle",
+                        color=(0.65, 0.65, 0.65, 1),
+                        font_size="15sp",
+                        size_hint_x=None,
+                        width=dp(18),
+                    )
+                    right = Label(
+                        text=meaning,
+                        halign="left",
+                        valign="middle",
+                        color=(0.9, 0.9, 0.9, 1),
+                        font_size="15sp",
+                    )
+                    left.bind(size=lambda inst, *_: setattr(inst, "text_size", inst.size))
+                    sep.bind(size=lambda inst, *_: setattr(inst, "text_size", inst.size))
+                    right.bind(size=lambda inst, *_: setattr(inst, "text_size", inst.size))
+                    row.add_widget(left)
+                    row.add_widget(sep)
+                    row.add_widget(right)
+                    keys.add_widget(row)
+                keys_wrap = AnchorLayout(anchor_x="center", anchor_y="center", size_hint_y=None, height=dp(78))
+                keys_wrap.add_widget(keys)
+                root.add_widget(blurb)
+                root.add_widget(keys_wrap)
+                Popup(
+                    title="",
+                    title_size=0,
+                    separator_height=0,
+                    content=root,
+                    size_hint=(None, None),
+                    size=(dp(430), dp(220)),
+                ).open()
+
+            def fix_heights(self):
+                self.log.fix_heights()
+                if hasattr(self.feed_log, "fix_heights"):
+                    self.feed_log.fix_heights()
+
+            def sync_toggle_label(self):
+                mode = getattr(self.ctx, "tracker_mode", "progress")
+                progress = mode == "progress"
+                self.toggle_button.text = "Show In Logic" if progress else "Show Progress"
+                self.hide_completed_btn.text = (
+                    "Show completed" if getattr(self.ctx, "progress_hide_completed", False) else "Hide completed"
+                )
+                self.feed_button.opacity = 1 if progress else 0
+                self.feed_button.disabled = not progress
+                self.feed_button.width = dp(118) if progress else 0
+                self._center_btns.opacity = 1 if progress else 0
+                self._center_btns.disabled = not progress
+                self._center_btns.width = dp(96 + 104 + 126 + 56 + 18) if progress else 0
+                for btn in (self.expand_all_btn, self.collapse_all_btn, self.hide_completed_btn, self.info_btn):
+                    btn.disabled = not progress
+                self.apply_feed()
+
+            def apply_rows(self, rows):
+                progress = getattr(self.ctx, "tracker_mode", "progress") == "progress"
+                self.log.viewclass = "TrackerRow" if progress else "SelectableLabel"
+                self.log.adaptive_height = not progress
+                self.log.do_scroll_x = bool(progress)
+                cleaned = []
+                for row in rows or []:
+                    if isinstance(row, dict):
+                        cleaned.append({
+                            "text": row.get("text") or "",
+                            "expand_key": row.get("expand_key"),
+                        })
+                    else:
+                        cleaned.append({"text": str(row), "expand_key": None})
+                self.log.data = cleaned
+                self.sync_toggle_label()
+                keep = self._keep_scroll
+                self._keep_scroll = False
+                scroll_y = getattr(self.log, "scroll_y", 1)
+
+                def _after_layout(*_args):
+                    self._fit_progress_log()
+                    if progress and self.log.do_scroll_y:
+                        self.log.scroll_y = scroll_y if keep else 1
+
+                Clock.schedule_once(_after_layout, 0)
+
+            def _feed_lines(self):
+                lines = []
+                for item in (getattr(self.ctx, "progress_feed", None) or []):
+                    if isinstance(item, dict):
+                        line = str(item.get("text") or "")
+                    else:
+                        line = str(item or "")
+                    line = line.strip()
+                    if line and line not in ("(no recent messages yet)",):
+                        lines.append(line)
+                return lines[-5:]
+
+            def apply_feed(self):
+                progress = getattr(self.ctx, "tracker_mode", "progress") == "progress"
+                open_ = progress and getattr(self.ctx, "progress_feed_open", False)
+                self.feed_button.text = "Hide activity" if open_ else "Show activity"
+                self.feed_footer.disabled = False
+                self.feed_footer.opacity = 1
+                if not progress or not open_:
+                    self.feed_log.data = []
+                    self.feed_log.height = 0
+                    self.feed_log.opacity = 0
+                    self.feed_box.height = 0
+                    self.feed_box.opacity = 0
+                    self.feed_footer.height = dp(68)
+                    Clock.schedule_once(lambda *_: self._fit_progress_log(), 0)
+                    return
+                lines = self._feed_lines() or ["No recent checks."]
+                self.feed_log.data = [{"text": line} for line in lines]
+                self.feed_log.height = dp(26) * len(lines) + dp(10)
+                self.feed_log.opacity = 1
+                self.feed_log.scroll_y = 0
+                self.feed_box.opacity = 1
+                self.feed_box.height = self.feed_log.height + dp(16)
+                self.feed_footer.height = self.feed_box.height + dp(40) + dp(16) + dp(22)
+                Clock.schedule_once(lambda *_: self._fit_progress_log(), 0)
+
+            def toggle_progress_section(self, key):
+                expanded = getattr(self.ctx, "progress_expanded", None)
+                if not isinstance(expanded, set):
+                    expanded = set()
+                    self.ctx.progress_expanded = expanded
+                if key in expanded:
+                    expanded.discard(key)
+                else:
+                    expanded.add(key)
+                self._keep_scroll = True
+                scroll_y = getattr(self.log, "scroll_y", 1)
+                tracker = getattr(self.ctx, "tracker", None)
+                if tracker:
+                    tracker.update_progress_view()
+                self.log.scroll_y = scroll_y
+
+            def on_toggle(self, *_args):
+                current = getattr(self.ctx, "tracker_mode", "progress")
+                self.ctx.tracker_mode = "progress" if current != "progress" else "logic"
+                if self.ctx.tracker_mode == "progress" and not getattr(self.ctx, "_progress_height_grown", False):
+                    try:
+                        from kivy.core.window import Window
+                        Window.size = (Window.width, Window.height + dp(48))
+                        self.ctx._progress_height_grown = True
+                    except Exception:
+                        pass
+                self.sync_toggle_label()
+                tracker = getattr(self.ctx, "tracker", None)
+                if tracker:
+                    tracker.update_locations()
+
+            def on_feed_toggle(self, *_args):
+                if getattr(self.ctx, "tracker_mode", "progress") != "progress":
+                    return
+                self.ctx.progress_feed_open = not getattr(self.ctx, "progress_feed_open", False)
+                self.apply_feed()
+
         class OblivionManager(GameManager):
             logging_pairs = [
                 ("Client", "Archipelago")
@@ -2936,9 +5295,49 @@ class OblivionContext(CommonContext):
             
             def build(self):
                 ret = super().build()
+                try:
+                    from kivy.core.window import Window
+                    if Window.height < 680:
+                        Window.size = (Window.width, 680)
+                except Exception:
+                    pass
                 self.ctx.tab_items = self.add_client_tab("Items", UILog())
                 self.ctx.tab_goal = self.add_client_tab("Goal Progress", UILog())
-                self.ctx.tab_locations = self.add_client_tab("Tracker", UILog())
+                tracker_panel = TrackerPanel(self.ctx)
+                self.ctx.tracker_panel = tracker_panel
+                self.ctx.tab_locations_log = tracker_panel.log
+                self.ctx.tab_locations = self.add_client_tab("Tracker", tracker_panel)
+                def _tint_tracker_tab(_dt=None):
+                    tab = getattr(self.ctx, "tab_locations", None)
+                    if not tab:
+                        return
+                    gold = (0.82, 0.70, 0.28, 1)
+                    gold_active = (0.93, 0.80, 0.38, 1)
+                    labels = []
+                    ids = getattr(tab, "ids", None)
+                    container = ids.get("label_container") if ids else None
+                    if container:
+                        labels = list(container.children)
+                    else:
+                        labels = [
+                            widget for widget in tab.walk(restrict=True)
+                            if hasattr(widget, "text_color_normal")
+                        ]
+                    for widget in labels:
+                        try:
+                            widget.theme_text_color = "Custom"
+                        except Exception:
+                            pass
+                        widget.text_color_normal = gold
+                        if hasattr(widget, "text_color_active"):
+                            widget.text_color_active = gold_active
+                try:
+                    from kivy.clock import Clock
+                    _tint_tracker_tab()
+                    Clock.schedule_once(_tint_tracker_tab, 0)
+                    Clock.schedule_once(_tint_tracker_tab, 0.3)
+                except Exception:
+                    _tint_tracker_tab()
                 self.ctx.tab_shop = self.add_client_tab("Shop", UILog())
                 # delayed initialization to ensure data populates
                 try:
@@ -2952,6 +5351,7 @@ class OblivionContext(CommonContext):
                                 tracker.update_shop_tab()
                                 tracker.schedule_shop_scout()
                                 tracker.update_goal_progress()
+                                tracker.update_locations()
                     _a.get_event_loop().create_task(_after())
                 except Exception:
                     pass

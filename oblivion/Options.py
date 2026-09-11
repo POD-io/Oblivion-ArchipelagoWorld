@@ -16,6 +16,7 @@ class OblivionGoal(Choice):
     Light the Dragonfires: Complete the Main Quest
     Nirnsanity: Collect Nirnroot plants and complete the Seeking Your Roots quest
     Treasure Hunter: Collect a specific amount of gold (set by Gold Goal)
+    Bounty Hunter: Complete all Bounty Contracts in your seed
     """
     display_name = "Goal"
     option_arena = 0
@@ -25,6 +26,7 @@ class OblivionGoal(Choice):
     option_light_the_dragonfires = 4
     option_nirnsanity = 5
     option_treasure_hunter = 6
+    option_bounty_hunter = 7
     default = 4
 
 # =====================================================
@@ -166,8 +168,77 @@ class ExplorationSidequestCount(Range):
     """
     display_name = "Exploration Sidequest Count"
     range_start = 0
-    range_end = 5
+    range_end = 8
     default = 2
+
+class DoomstoneChecks(Toggle):
+    """
+    When true: Birthsign Doomstone checks are included for each unlocked region.
+    When false: No doomstone location checks are added.
+
+    Ignored when regions are disabled.
+    """
+    display_name = "Doomstone Checks"
+    default = 1
+
+class BlackMarketChecks(Range):
+    """
+    Highest Black Market fencing threshold included in the seed.
+    Thresholds at or below this value become locations. 0 disables Black Market checks.
+
+    Possible checks: 50, 150, 300, 500, 1000, 2000, 3000, 4000, 5000
+    """
+    display_name = "Black Market"
+    range_start = 0
+    range_end = 5000
+    default = 1000
+
+class BountyCount(Range):
+    """
+    Number of bounty contracts generated for this seed (0-20).
+    Bounty contracts assign specific NPCs or enemy types to kill.
+    The first contract is granted at the start of the game. Each Progressive Bounty Contract unlocks the next.
+
+    If Goal is Bounty Hunter: Completing this number of contracts is required for victory.
+    """
+    display_name = "Bounty Count"
+    range_start = 0
+    range_end = 20
+    default = 5
+
+# =====================================================
+# KILL CHECKS
+# Weapon Lock applies to dungeon / overworld / Oblivion kills
+# =====================================================
+
+class WeaponLock(Toggle):
+    """
+    When true: Dungeon, overworld, and Oblivion kill checks only increment if the
+    kill was made with a licensed weapon type. You start with a Starting Weapon
+    license; the other licenses must be found in the world.
+
+    Does not affect bounty kills.
+
+    When false: All weapon types count.
+    """
+    display_name = "Weapon Lock"
+    default = 0
+
+class StartingWeapon(Choice):
+    """
+    Which weapon license you start with when Weapon Lock is on.
+
+    Ignored when Weapon Lock is off.
+    """
+    display_name = "Starting Weapon"
+    option_blade = 0
+    option_blunt = 1
+    option_bow = 2
+    option_staff = 3
+    option_spell = 4
+    option_unarmed = 5
+    option_random_weapon = 6
+    default = 6
 
 class DungeonKills(Range):
     """
@@ -183,6 +254,15 @@ class DungeonKills(Range):
     range_end = 200
     default = 50
 
+class DungeonKillsPerCheck(Range):
+    """
+    Enemy kills needed to award one Dungeon Kill check.
+    """
+    display_name = "Kills per Dungeon Check"
+    range_start = 1
+    range_end = 10
+    default = 3
+
 class OverworldKills(Range):
     """
     Number of overworld kill location checks (enemies killed in Tamriel).
@@ -197,15 +277,43 @@ class OverworldKills(Range):
     range_end = 200
     default = 40
 
-class DoomstoneChecks(Toggle):
+class OverworldKillsPerCheck(Range):
     """
-    When true: Birthsign Doomstone visit checks are included for each unlocked region.
-    When false: No doomstone location checks are added.
-
-    Ignored when regions are disabled.
+    Enemy kills needed to award one Overworld Kill check.
     """
-    display_name = "Doomstone Checks"
+    display_name = "Kills per Overworld Check"
+    range_start = 1
+    range_end = 10
     default = 1
+
+class OblivionKills(Range):
+    """
+    Number of Oblivion plane kill location checks (enemies killed inside Oblivion Gates).
+    Set to 0 to disable Oblivion kill checks.
+
+    When Gate Count is above 0: batched by Gate Key count. With 5 keys and 50 kills,
+    checks 1-10 need 1 key, 11-20 need 2 keys, and so on.
+
+    When Goal is Light the Dragonfires: checks are batched by region unlocks, same as dungeon
+    and overworld kills. If regions are disabled, all Oblivion kill checks
+    are accessible immediately.
+
+    Ignored when Gate Count is 0 and Goal is not Light the Dragonfires.
+    """
+    display_name = "Oblivion Kill Checks"
+    range_start = 0
+    range_end = 200
+    default = 50
+
+class OblivionKillsPerCheck(Range):
+    """
+    Enemy kills needed to award one Oblivion Kill check.
+    Ignored when Oblivion Kill Checks is 0.
+    """
+    display_name = "Kills per Oblivion Check"
+    range_start = 1
+    range_end = 10
+    default = 2
 
 # =====================================================
 # CLASS SYSTEM
@@ -264,19 +372,25 @@ class ClassLevelMaximum(Range):
     range_end = 5
     default = 3
 
-class StartWithClass(Toggle):
+class StartWithClass(Choice):
     """
-    When true: Start with your above selected class unlocked immediately.
+    Where your first Progressive <Class> Level is placed.
 
-    When false: You must receive the first Progressive <Class> Level in the multiworld
-    to unlock class skill checks.
+    Early: Sphere 1, any world's locations.
+    Local Early: Sphere 1, only on this slot's locations.
+    Start With: Start with the first class level already unlocked.
 
-    Note: Your first Class level is always located in Sphere 1. [early locations]
-    
     Ignored when Class Selection is Off.
     """
     display_name = "Start With Class"
+    option_early = 0
+    option_local_early = 1
+    option_start_with = 2
     default = 0
+    alias_false = 0
+    alias_off = 0
+    alias_true = 2
+    alias_on = 2
 
 class ExcludedSkills(OptionDict):
     """
@@ -398,6 +512,22 @@ class DungeonMarkerMode(Choice):
     option_reveal_only = 1
     default = 0
 
+class DungeonWarp(Choice):
+    """
+    Automatically warp the player out to the overworld when completing a seeded dungeon.
+    
+    Off: No warp (vanilla behavior)
+    On: All dungeons that provide a check offer a warp-out option upon completion
+    Item: Warp functionality unlocked when you receive the "Dungeon Warp" item from the multiworld
+    Early Item: Same as Item, but the Dungeon Warp item is forced into early locations
+    """
+    display_name = "Dungeon Warp"
+    option_off = 0
+    option_on = 1
+    option_item = 2
+    option_early_item = 3
+    default = 3
+
 class ShopScoutType(Choice):
     """
     How shop item scouting displays information.
@@ -432,10 +562,10 @@ class AutoTracking(Toggle):
     Entering the overworld switches to Nirnroot tracking. Entering a
     dungeon switches to Boss Chest tracking.
     
-    Note: F11 can be used to manually cycle the mode or entirely disable the feature.
+    Note: F11 can be used to manually cycle the mode or disable the feature.
     """
     display_name = "Auto Tracking"
-    default = 0
+    default = 1
 
 class SilentAutoTracking(Toggle):
     """
@@ -448,6 +578,23 @@ class SilentAutoTracking(Toggle):
     """
     display_name = "Silent Auto-Tracking"
     default = 0
+
+class APTips(Toggle):
+    """
+    Enable Archipelago tips? These will provide extra guidance on how to complete checks.
+    This is recommended if you are unfamiliar with Archipelago or if you prefer a more guided experience.
+    """
+    display_name = "In-Game AP Tips"
+    default = 0
+
+class SkillXpMultiplier(Range):
+    """
+    Skill XP multiplier. 1 is vanilla. 2 is double speed, 3 is triple speed, etc.
+    """
+    display_name = "Skill Leveling Speed"
+    range_start = 1
+    range_end = 8
+    default = 1
 
 # =====================================================
 # TRAPS
@@ -466,12 +613,12 @@ class TrapPercentage(Range):
 class MovementTrapWeight(Range):
     """
     Relative weight for Movement Trap. Set to 0 to disable this trap type.
-    By default, 60% of traps will be Movement Traps.
+    By default, 55% of traps will be Movement Traps.
     """
     display_name = "Movement Trap Weight"
     range_start = 0
     range_end = 100
-    default = 60
+    default = 55
 
 class SpawnTrapWeight(Range):
     """
@@ -493,24 +640,15 @@ class StormTrapWeight(Range):
     range_end = 100
     default = 10
 
-
-
-
-class DungeonWarp(Choice):
+class WantedTrapWeight(Range):
     """
-    Automatically warp the player out to the overworld when completing a seeded dungeon.
-    
-    Off: No warp (vanilla behavior)
-    On: All dungeons that provide a check offer a warp-out option upon completion
-    Item: Warp functionality unlocked when you receive the "Dungeon Warp" item from the multiworld
-    Early Item: Same as Item, but the Dungeon Warp item is forced into early locations
+    Relative weight for Wanted Trap. Set to 0 to disable this trap type.
+    By default, 5% of traps will be Wanted Traps.
     """
-    display_name = "Dungeon Warp"
-    option_off = 0
-    option_on = 1
-    option_item = 2
-    option_early_item = 3
-    default = 2
+    display_name = "Wanted Trap Weight"
+    range_start = 0
+    range_end = 100
+    default = 5
 
 @dataclass
 class OblivionOptions(PerGameCommonOptions):
@@ -522,17 +660,27 @@ class OblivionOptions(PerGameCommonOptions):
     gold_goal: GoldGoal
 
     # World Content Settings
-    gate_count: GateCount
     shrine_count: ShrineCount
+    gate_count: GateCount
     arena_matches: ArenaMatches
     nirnroot_count: NirnrootCount
     region_unlocks: RegionUnlocks
     dungeons_per_region: DungeonsPerRegion
     wealth_sidequest_count: WealthSidequestCount
     exploration_sidequest_count: ExplorationSidequestCount
-    dungeon_kills: DungeonKills
-    overworld_kills: OverworldKills
     doomstone_checks: DoomstoneChecks
+    black_market_checks: BlackMarketChecks
+    bounty_count: BountyCount
+
+    # Kill Checks (Weapon Lock applies to these remainders)
+    weapon_lock: WeaponLock
+    starting_weapon: StartingWeapon
+    dungeon_kills: DungeonKills
+    dungeon_kills_per_check: DungeonKillsPerCheck
+    overworld_kills: OverworldKills
+    overworld_kills_per_check: OverworldKillsPerCheck
+    oblivion_kills: OblivionKills
+    oblivion_kills_per_check: OblivionKillsPerCheck
 
     # Class System
     class_selection: ClassSelection
@@ -547,11 +695,13 @@ class OblivionOptions(PerGameCommonOptions):
     free_offerings: FreeOfferings
     fast_travel_item: FastTravelItem
     dungeon_marker_mode: DungeonMarkerMode
+    dungeon_warp: DungeonWarp
     shop_scout_type: ShopScoutType
     fast_arena: FastArena
     auto_tracking: AutoTracking
     silent_auto_tracking: SilentAutoTracking
-    dungeon_warp: DungeonWarp
+    ap_tips: APTips
+    skill_xp_multiplier: SkillXpMultiplier
     death_link: DeathLink
 
     # Traps
@@ -559,6 +709,7 @@ class OblivionOptions(PerGameCommonOptions):
     movement_trap_weight: MovementTrapWeight
     spawn_trap_weight: SpawnTrapWeight
     storm_trap_weight: StormTrapWeight
+    wanted_trap_weight: WantedTrapWeight
     # useful_items_percentage: UsefulItemsPercentage
 
 oblivion_option_groups = [
@@ -578,9 +729,19 @@ oblivion_option_groups = [
         DungeonsPerRegion,
         WealthSidequestCount,
         ExplorationSidequestCount,
+        DoomstoneChecks,
+        BlackMarketChecks,
+        BountyCount,
+    ]),
+    OptionGroup("Kill Checks", [
+        WeaponLock,
+        StartingWeapon,
         DungeonKills,
+        DungeonKillsPerCheck,
         OverworldKills,
-        DoomstoneChecks
+        OverworldKillsPerCheck,
+        OblivionKills,
+        OblivionKillsPerCheck,
     ]),
     OptionGroup("Class System", [
         ClassSelection,
@@ -599,12 +760,15 @@ oblivion_option_groups = [
         ShopScoutType,
         FastArena,
         AutoTracking,
-        SilentAutoTracking
+        SilentAutoTracking,
+        APTips,
+        SkillXpMultiplier,
     ]),
     OptionGroup("Traps", [
         TrapPercentage,
         MovementTrapWeight,
         SpawnTrapWeight,
         StormTrapWeight,
+        WantedTrapWeight,
     ]),
 ]
