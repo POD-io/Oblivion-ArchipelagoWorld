@@ -8,7 +8,7 @@ An Archipelago integration for **The Elder Scrolls IV: Oblivion Remastered**.
 
 ## Overview
 
-This APWorld integrates Oblivion Remastered into the Archipelago multiworld system. Daedric shrines, Oblivion gates, the Arena, dungeons, shops, classes, and more unlock as you receive progression items from other players. Configure which content appears in each seed, pick a victory goal, and scale from small curated runs to a full Cyrodiil marathon.
+This APWorld integrates Oblivion Remastered into the Archipelago multiworld system. Daedric shrines, Oblivion gates, the Arena, dungeons, shops, classes, bounties, and more unlock as you receive progression items from other players. Configure which content appears in each seed, pick a victory goal, and scale from small curated runs to a full Cyrodiil marathon.
 
 ## How it Works
 
@@ -23,6 +23,9 @@ Most vanilla content is gated behind multiworld items. Receive progression, comp
 | Shops | Progressive Shop Stock | Buy key items from innkeepers |
 | Regions & Dungeons | Region Access | Clear the dungeons in each region |
 | Class | Progressive Class Level | Class skill increases |
+| Bounties | Progressive Bounty Contract | Contract completions |
+| Black Market | Black Market Access | Fence sales |
+| Weapon Lock | Weapon licenses | Kill checks |
 
 ## Supported Locations
 
@@ -35,7 +38,9 @@ Most vanilla content is gated behind multiworld items. Receive progression, comp
 - **Class Skill Increases**
 - **Sidequests**
 - **Nirnroot harvesting**
-- **Dungeon & Overworld kills**
+- **Dungeon, overworld, and Oblivion kills**
+- **Bounty contracts**
+- **Black Market fencing**
 
 ## Available Settings
 
@@ -47,6 +52,7 @@ Most vanilla content is gated behind multiworld items. Receive progression, comp
 - **`dungeon_delver`:** Clear all selected dungeons
 - **`nirnsanity`:** Collect X Nirnroots from the multiworld
 - **`treasure_hunter`:** Reach a specified gold total
+- **`bounty_hunter`:** Hunt and slay specified NPCs or enemy types
 
 ### Content Scaling
 - **`gate_count`:** Number of Oblivion Gates available (0-20, 0 disables gates)
@@ -55,8 +61,11 @@ Most vanilla content is gated behind multiworld items. Receive progression, comp
 - **`shrine_goal`:** For Shrine Seeker goal: How many shrine quests needed for victory (1-15)
 - **`region_unlocks`:** Number of regions that appear as unlock items (0-10, you start with one region)
 - **`dungeons_per_region`:** Maximum dungeons selected per unlocked region (0-24)
-- **`wealth_sidequest_count` / `exploration_sidequest_count`:** Sidequests added to the seed (0–10 / 0–5)
-- **`dungeon_kills` / `overworld_kills`:** Kill checks (0–200 each)
+- **`wealth_sidequest_count` / `exploration_sidequest_count`:** Sidequests added to the seed (0–10 / 0–8)
+- **`dungeon_kills` / `overworld_kills` / `oblivion_kills`:** Kill checks (0–200 each)
+- **`bounty_count`:** Bounty contracts on the seed (0–20)
+- **`black_market_checks`:** Highest fencing threshold included (0 - 5000)
+- **`weapon_lock`:** Require a license for each of the six kill types
 - **`nirnroot_count`:** Nirnroot harvesting checks (0–100)
 
 ### Class System
@@ -66,8 +75,10 @@ Most vanilla content is gated behind multiworld items. Receive progression, comp
   - **Specific classes:** Acrobat, Agent, Archer, Assassin, Barbarian, Bard, Battlemage, Crusader, Healer, Knight, Mage, Monk, Nightblade, Pilgrim, Rogue, Scout, Sorcerer, Spellsword, Thief, Warrior, Witchhunter
 - **`class_level_maximum`:** Max progressive class levels (1-5, default 3)
   - Each level provides 14 additional skill checks (2 per class skill)
-- **`start_with_class`:** Start with first class level unlocked (default: Off)
-  - When false, you must receive the first Progressive Class Level from the multiworld
+- **`start_with_class`:** Where the first class level is placed (default: Early)
+  - **`early`:** Sphere 1, any world's locations
+  - **`local_early`:** Sphere 1, only this slot's locations
+  - **`start_with`:** Start with the first Progressive Class Level already unlocked
 - **`excluded_skills`:** Exclude specific skills from generating checks
 
 ### Quality of Life
@@ -90,10 +101,12 @@ Most vanilla content is gated behind multiworld items. Receive progression, comp
 - **`fast_arena`:** Skip arena announcer dialogue and fight immediately
 - **`auto_tracking`:** Guide the player to nearby boss chests or nirnroot. Press **F11** in-game to manually toggle the mode
 - **`silent_auto_tracking`:** Hide in-game tracking messages, track via quest marker only
+- **`ap_tips`:** In-game Archipelago tips for how to complete checks (default: Off)
+- **`skill_xp_multiplier`:** Skill leveling speed (1 is vanilla, up to 8)
 
 ### Traps
 - **`trap_percentage`:** Amount of filler slots replaced by traps
-- Current trap types: Movement / Storm / Spawn
+- Current trap types: Movement / Storm / Spawn / Wanted
 
 ### Deathlink
 Uses Archipelago’s standard **`death_link`** option. When enabled, a player death can trigger deaths for others who also have deathlink on.
@@ -120,6 +133,10 @@ Displays current game status including:
 - Gate key information
 - Configured Goal
 - Region progress, sidequests, nirnroot/gold/kill progress when enabled
+- Bounty, Black Market, and Weapon Lock progress when enabled
+
+### `/helpme`
+Diagnoses AP client, MO2, ESP, and bridge setup.
 
 ### `/set_save_path <path>`
 Manually set the Oblivion save path if auto-detection fails.
