@@ -4392,8 +4392,12 @@ class OblivionContext(CommonContext):
             return True
         return item.endswith(" Skill Increase")
 
-    def _journal_incremental_deficit_tokens(self, completed_items):
-        """Award only the gap between journal event counts and checks already on the server."""
+    def _journal_ck_gated_deficit_tokens(self, completed_items):
+        """On connect, send journal events the server has not seen yet - but only for
+        things the player could not have done while the check was locked.
+
+        Kill checks are not included, as they are written while BK'd, and should not be "caught up" later.
+        """
         id_to_name = {data.id: name for name, data in Locations.location_table.items()}
         checked_names = []
         for loc_id in getattr(self, "checked_locations", set()) or []:
@@ -4408,9 +4412,6 @@ class OblivionContext(CommonContext):
         for token, predicate in (
             ("Oblivion Gate Closed", lambda name: name.startswith("Gate ") and name.endswith(" Closed")),
             ("Nirnroot Harvested", lambda name: name.startswith("Nirnroot ") and name.endswith(" Harvested")),
-            ("Dungeon Kill", lambda name: name.startswith("Dungeon Kill ")),
-            ("Overworld Kill", lambda name: name.startswith("Overworld Kill ")),
-            ("Oblivion Kill", lambda name: name.startswith("Oblivion Kill ")),
         ):
             file_count = sum(1 for item in completed_items if item == token)
             tokens.extend([token] * max(0, file_count - already_checked(predicate)))
@@ -4492,12 +4493,15 @@ class OblivionContext(CommonContext):
                 self._completed_journal_ready = False
 
             if not self._completed_journal_ready:
-                # First read: uniques in full; incrementals by deficit so old kill lines are not replayed.
+                # First read after connect: send unique checks as usual, then catch up
+                # anything the player could not have done while BK'd. Kill lines stay
+                # skipped - they are written while locked and must not be caught up.
+                # ** This is used in case someone completes checks while AP is offline. **
                 items_to_process = [
                     item for item in completed_items
                     if not self._is_journal_incremental(item) and item != "Deathlink"
                 ]
-                items_to_process.extend(self._journal_incremental_deficit_tokens(completed_items))
+                items_to_process.extend(self._journal_ck_gated_deficit_tokens(completed_items))
                 self._completed_journal_ready = True
                 self.completed_line_count = len(completed_items)
             else:
@@ -4616,7 +4620,8 @@ class OblivionContext(CommonContext):
                         # Only send deathlink if we haven't sent one recently
                         current_time = time.time()
                         if current_time - self.last_death_sent > 3.0:  # 3 second cooldown
-                            await self.send_death("The Adventurer of Cyrodiil has fallen.")
+                            slot_name = getattr(self, "auth", None) or "The Adventurer of Cyrodiil"
+                            await self.send_death(f"{slot_name}'s soul was claimed by Mehrunes Dagon")
                             self.last_death_sent = current_time
                 
                 # Check if this is a Nirnroot Harvested event
